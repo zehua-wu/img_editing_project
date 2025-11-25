@@ -14,11 +14,6 @@ from diffusers import StableDiffusionPipeline, ControlNetModel
 
 class MasaCtrlPipeline(StableDiffusionPipeline):
     
-    # register controlnet
-    def __init__(self, controlnet:ControlNetModel = None, **kwargs):
-        super.__init__(**kwargs)
-        self.register_modules(controlnet=controlnet)
-
     def next_step(
         self,
         model_output: torch.FloatTensor,

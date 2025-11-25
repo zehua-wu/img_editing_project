@@ -115,8 +115,10 @@ class MasaCtrlEditor:
         self.model = MasaCtrlPipeline.from_pretrained(
             "CompVis/stable-diffusion-v1-4",
             scheduler=self.scheduler,
-            controlnet=self.controlnet,
         ).to(device)
+
+        if self.controlnet is not None:
+            self.model.controlnet = self.controlnet
 
         self.model.scheduler.set_timesteps(self.num_ddim_steps)
         

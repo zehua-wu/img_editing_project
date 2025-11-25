@@ -5,3 +5,4 @@ __pycache__
 *.csv
 *.out
 *.bash
+*.md

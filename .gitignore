@@ -7,4 +7,4 @@ __pycache__
 *.bash
 *.md
 *.sh
-logs
+logs/

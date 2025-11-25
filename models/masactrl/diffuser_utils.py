@@ -122,8 +122,8 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
         else:
             control_image = control_image.float()
 
-        # [0,1] -> [-1,1]
-        control_image = control_image * 2.0 - 1.0
+        # # [0,1] -> [-1,1]
+        # control_image = control_image * 2.0 - 1.0
 
         # (3,H,W) -> (1,3,H,W)
         if control_image.ndim == 3:

@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 import random
 import os
+import cv2
 
 from diffusers import DDIMScheduler, ControlNetModel
 

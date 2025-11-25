@@ -117,8 +117,8 @@ class MasaCtrlEditor:
             scheduler=self.scheduler,
         ).to(device)
 
-        if self.controlnet is not None:
-            self.model.controlnet = self.controlnet
+
+        self.model.controlnet = self.controlnet
 
         self.model.scheduler.set_timesteps(self.num_ddim_steps)
         

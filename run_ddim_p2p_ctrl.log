@@ -1,0 +1,497 @@
+nohup: ignoring input
+===============================
+Running control_type=normal, control_scale=0.4
+Output dir: DDIM_p2p_control_output/normal_scale0.4
+===============================
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/accelerate/utils/torch_xla.py:18: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension: libtorch_cuda_cu.so: cannot open shared object file: No such file or directory
+  warn(f"Failed to load image Python extension: {e}")
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/controlnet_aux/mediapipe_face/mediapipe_face_common.py:7: UserWarning: The module 'mediapipe' is not installed. The package will have limited functionality. Please install it using the command: pip install 'mediapipe'
+  warnings.warn(
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/timm/models/registry.py:4: FutureWarning: Importing from timm.models.registry is deprecated, please import via timm.models
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.models", FutureWarning)
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/controlnet_aux/segment_anything/modeling/tiny_vit_sam.py:654: UserWarning: Overwriting tiny_vit_5m_224 in registry with controlnet_aux.segment_anything.modeling.tiny_vit_sam.tiny_vit_5m_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  return register_model(fn_wrapper)
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/controlnet_aux/segment_anything/modeling/tiny_vit_sam.py:654: UserWarning: Overwriting tiny_vit_11m_224 in registry with controlnet_aux.segment_anything.modeling.tiny_vit_sam.tiny_vit_11m_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  return register_model(fn_wrapper)
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/controlnet_aux/segment_anything/modeling/tiny_vit_sam.py:654: UserWarning: Overwriting tiny_vit_21m_224 in registry with controlnet_aux.segment_anything.modeling.tiny_vit_sam.tiny_vit_21m_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  return register_model(fn_wrapper)
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/controlnet_aux/segment_anything/modeling/tiny_vit_sam.py:654: UserWarning: Overwriting tiny_vit_21m_384 in registry with controlnet_aux.segment_anything.modeling.tiny_vit_sam.tiny_vit_21m_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  return register_model(fn_wrapper)
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/controlnet_aux/segment_anything/modeling/tiny_vit_sam.py:654: UserWarning: Overwriting tiny_vit_21m_512 in registry with controlnet_aux.segment_anything.modeling.tiny_vit_sam.tiny_vit_21m_512. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  return register_model(fn_wrapper)
+Fetching 16 files:   0%|          | 0/16 [00:00<?, ?it/s]Fetching 16 files: 100%|██████████| 16/16 [00:00<00:00, 61680.94it/s]
+/root/autodl-tmp/conda/envs/p2p/lib/python3.9/site-packages/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py:106: FutureWarning: The configuration file of this scheduler: DDIMSchedulerDev {
+  "_class_name": "DDIMSchedulerDev",
+  "_diffusers_version": "0.14.0",
+  "beta_end": 0.012,
+  "beta_schedule": "scaled_linear",
+  "beta_start": 0.00085,
+  "clip_sample": false,
+  "num_train_timesteps": 1000,
+  "prediction_type": "epsilon",
+  "set_alpha_to_one": false,
+  "steps_offset": 0,
+  "trained_betas": null
+}
+ is outdated. `steps_offset` should be set to 1 instead of 0. Please make sure to update the config accordingly as leaving `steps_offset` might led to incorrect results in future versions. If you have downloaded this checkpoint from the Hugging Face Hub, it would be very nice if you could open a Pull request for the `scheduler/scheduler_config.json` file
+  deprecate("steps_offset!=1", "1.0.0", deprecation_message, standard_warn=False)
+editing image [data/annotation_images/0_random_140/000000000000.jpg] with [ddim+p2p_ctrl]
+Loading base model ()...Done.
+Removing last two layers (global_pool & classifier).
+finish
+editing image [data/annotation_images/0_random_140/000000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000010.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000011.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000012.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000013.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000014.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000015.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000016.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000017.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000018.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000019.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000020.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000021.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000022.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000023.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000024.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000025.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000026.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000027.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000028.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000029.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000030.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000031.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000032.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000033.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000034.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000035.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000036.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000037.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000038.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000039.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000040.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000041.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000042.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000043.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000044.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000045.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000046.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000047.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000048.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000049.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000050.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000051.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000052.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000053.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000054.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000055.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000056.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000057.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000058.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000059.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000060.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000061.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000062.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000063.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000064.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000065.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000066.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000067.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000068.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000069.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000070.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000071.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000072.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000073.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000074.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000075.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000076.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000077.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000078.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000079.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000080.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000081.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000082.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000083.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000084.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000085.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000086.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000087.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000088.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000089.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000090.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000091.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000092.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000093.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000094.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000095.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000096.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000097.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000098.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000099.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000100.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000101.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000102.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000103.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000104.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000105.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000106.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000107.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000108.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000109.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000110.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000111.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000112.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000113.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000114.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000115.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000116.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000117.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000118.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000119.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000120.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000121.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000122.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000123.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000124.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000125.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000126.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000127.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000128.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000129.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000130.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000131.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000132.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000133.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000134.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000135.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000136.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000137.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000138.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/0_random_140/000000000139.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/1_animal/111000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/2_human/112000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/3_indoor/113000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/1_artificial/4_outdoor/114000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/1_animal/121000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/2_human/122000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/3_indoor/123000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000006.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000007.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000008.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/1_change_object_80/2_natural/4_outdoor/124000000009.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/2_add_object_80/1_artificial/1_animal/211000000000.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/2_add_object_80/1_artificial/1_animal/211000000001.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/2_add_object_80/1_artificial/1_animal/211000000002.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/2_add_object_80/1_artificial/1_animal/211000000003.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/2_add_object_80/1_artificial/1_animal/211000000004.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/2_add_object_80/1_artificial/1_animal/211000000005.jpg] with [ddim+p2p_ctrl]
+finish
+editing image [data/annotation_images/2_add_object_80/1_artificial/1_animal/211000000006.jpg] with [ddim+p2p_ctrl]
+finish

@@ -7,7 +7,8 @@ import torch.nn.functional as F
 import random
 import os
 
-from diffusers import DDIMScheduler
+from diffusers import DDIMScheduler, ControlNetModel
+
 
 from models.p2p.inversion import DirectInversion
 from models.masactrl.diffuser_utils import MasaCtrlPipeline
@@ -17,6 +18,9 @@ from models.masactrl.masactrl import MutualSelfAttentionControl
 from utils.utils import load_512,txt_draw
 
 from torchvision.io import read_image
+
+from controlnet_aux import ZoeDetector, CannyDetector, OpenposeDetector, NormalBaeDetector
+
 
 def mask_decode(encoded_mask,image_shape=[512,512]):
     length=image_shape[0]*image_shape[1]
@@ -56,21 +60,73 @@ def load_image(image_path, device):
 
 
 class MasaCtrlEditor:
-    def __init__(self, method_list, device, num_ddim_steps=50) -> None:
+    def __init__(
+            self, 
+            method_list, 
+            device, 
+            num_ddim_steps=50,
+            # controlnet
+            control_type=None,          # NEW: 'canny' / 'pose' / 'depth' / 'normal' / None
+            controlnet_path=None,       
+            control_scale=1.0,  
+            ) -> None:
         self.device=device
         self.method_list=method_list
         self.num_ddim_steps=num_ddim_steps
+
         # init model
         self.scheduler = DDIMScheduler(beta_start=0.00085,
                                     beta_end=0.012,
                                     beta_schedule="scaled_linear",
                                     clip_sample=False,
                                     set_alpha_to_one=False)
-        self.model = MasaCtrlPipeline.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", scheduler=self.scheduler).to(device)
-        self.model.scheduler.set_timesteps(self.num_ddim_steps)
-
         
+
+        # ControlNet
+        self.control_type = control_type
+        self.control_scale = control_scale
+        self.control_preprocessor = None
+        self.controlnet = None
+
+        if control_type is not None:
+            if control_type not in ["canny", "pose", "depth", "normal"]:
+                raise NotImplementedError(f"Control Type Not Supported: {control_type}")
+            # ControlPreprocessor
+            self.control_preprocessor = ControlPreprocessor(
+                device=device,
+                control_type=control_type,
+            )
+
+            # default model
+            if controlnet_path is None:
+                control_type_model_map = {
+                    "canny": "lllyasviel/control_v11p_sd15_canny",
+                    "pose": "lllyasviel/control_v11p_sd15_openpose",
+                    "depth": "lllyasviel/control_v11f1p_sd15_depth",
+                    "normal": "lllyasviel/control_v11p_sd15_normalbae",
+                }
+                controlnet_path = control_type_model_map[control_type]
+
+            self.controlnet = ControlNetModel.from_pretrained(
+                controlnet_path
+            ).to(device)
+
+        # MasaCtrlPipeline
+        self.model = MasaCtrlPipeline.from_pretrained(
+            "CompVis/stable-diffusion-v1-4",
+            scheduler=self.scheduler,
+            controlnet=self.controlnet,
+        ).to(device)
+
+        self.model.scheduler.set_timesteps(self.num_ddim_steps)
+        
+
+    # get control image(hint)
+    def prepare_control_hint(self, control_image: Image.Image) -> torch.Tensor:
+        if self.control_preprocessor is None:
+            raise RuntimeError("control_preprocessor is not initialized. Set control_type first.")
+        return self.control_preprocessor(control_image)
+    
     def __call__(self, 
                 edit_method,
                 image_path,
@@ -78,95 +134,164 @@ class MasaCtrlEditor:
                 prompt_tar,
                 guidance_scale,
                 step=4,
-                layper=10):
-        if edit_method=="ddim+masactrl":
-            return self.edit_image_ddim_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
-        elif edit_method=="directinversion+masactrl":
-            return self.edit_image_directinversion_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
+                layper=10,
+                use_control=False):
+        
+        control_image_tensor = None
+        if use_control and self.control_type is not None:
+            pil_img = Image.open(image_path).convert("RGB")
+            # (1,3,512,512) in [0,1]
+            control_image_tensor = self.prepare_control_hint(pil_img)
+
+        if edit_method == "ddim+masactrl":
+            return self.edit_image_ddim_MasaCtrl(
+                image_path,
+                prompt_src,
+                prompt_tar,
+                guidance_scale,
+                step=step,
+                layper=layper,
+                control_image=control_image_tensor,   # NEW
+            )
+        elif edit_method == "directinversion+masactrl":
+            return self.edit_image_directinversion_MasaCtrl(
+                image_path,
+                prompt_src,
+                prompt_tar,
+                guidance_scale,
+                step=step,
+                layper=layper,
+                control_image=control_image_tensor,   # NEW
+            )
         else:
             raise NotImplementedError(f"No edit method named {edit_method}")
 
-    def edit_image_directinversion_MasaCtrl(self,image_path,prompt_src,prompt_tar,guidance_scale,step=4,layper=10):
-        source_image=load_image(image_path, self.device)
+    def edit_image_directinversion_MasaCtrl(
+        self,
+        image_path,
+        prompt_src,
+        prompt_tar,
+        guidance_scale,
+        step=4,
+        layper=10,
+        control_image=None,    # NEW
+    ):
+        source_image = load_image(image_path, self.device)
         image_gt = load_512(image_path)
-        
-        prompts=["", prompt_tar]
-        
-        null_inversion = DirectInversion(model=self.model,
-                                                num_ddim_steps=self.num_ddim_steps)
-        
+
+        prompts = ["", prompt_tar]
+
+        null_inversion = DirectInversion(
+            model=self.model,
+            num_ddim_steps=self.num_ddim_steps,
+        )
+
         _, image_enc_latent, x_stars, noise_loss_list = null_inversion.invert(
-            image_gt=image_gt, prompt=prompts, guidance_scale=guidance_scale)
+            image_gt=image_gt,
+            prompt=prompts,
+            guidance_scale=guidance_scale,
+        )
         x_t = x_stars[-1]
-        
-        # results of direct synthesis
+
+        # 1) direct synthesis
         editor = AttentionBase()
         regiter_attention_editor_diffusers(self.model, editor)
-        image_fixed = self.model([prompt_tar],
-                            latents=x_t,
-                            num_inference_steps=self.num_ddim_steps,
-                            guidance_scale=guidance_scale,
-                            noise_loss_list=None)
-        
-        # hijack the attention module
+        image_fixed = self.model(
+            [prompt_tar],
+            latents=x_t,
+            num_inference_steps=self.num_ddim_steps,
+            guidance_scale=guidance_scale,
+            noise_loss_list=None,
+            control_image=control_image,                      # NEW
+            controlnet_conditioning_scale=self.control_scale  # NEW
+        )
+
+        # 2) MasaCtrl
         editor = MutualSelfAttentionControl(step, layper)
         regiter_attention_editor_diffusers(self.model, editor)
 
-        # inference the synthesized image
-        image_masactrl = self.model(prompts,
-                            latents= x_t.expand(len(prompts), -1, -1, -1),
-                            guidance_scale=guidance_scale,
-                            noise_loss_list=noise_loss_list)
-        
+        image_masactrl = self.model(
+            prompts,
+            latents=x_t.expand(len(prompts), -1, -1, -1),
+            guidance_scale=guidance_scale,
+            noise_loss_list=noise_loss_list,
+            control_image=control_image,                      # NEW
+            controlnet_conditioning_scale=self.control_scale  # NEW
+        )
+
         image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        out_image=np.concatenate((
-                                np.array(image_instruct),
-                                ((source_image[0].permute(1,2,0).detach().cpu().numpy() * 0.5 + 0.5)*255).astype(np.uint8),
-                                (image_masactrl[0].permute(1,2,0).detach().cpu().numpy()*255).astype(np.uint8),
-                                (image_masactrl[-1].permute(1,2,0).detach().cpu().numpy()*255).astype(np.uint8)),1)
-        
+
+        out_image = np.concatenate(
+            (
+                np.array(image_instruct),
+                ((source_image[0].permute(1, 2, 0).detach().cpu().numpy() * 0.5 + 0.5) * 255).astype(np.uint8),
+                (image_masactrl[0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+                (image_masactrl[-1].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+            ),
+            1,
+        )
+
         return Image.fromarray(out_image)
     
-    def edit_image_ddim_MasaCtrl(self, image_path,prompt_src,prompt_tar,guidance_scale,step=4,layper=10):
-        source_image=load_image(image_path, self.device)
-        
-        prompts=["", prompt_tar]
-        
-        start_code, latents_list = self.model.invert(source_image,
-                                            "",
-                                            guidance_scale=guidance_scale,
-                                            num_inference_steps=self.num_ddim_steps,
-                                            return_intermediates=True)
+    def edit_image_ddim_MasaCtrl(
+        self,
+        image_path,
+        prompt_src,
+        prompt_tar,
+        guidance_scale,
+        step=4,
+        layper=10,
+        control_image=None,    # NEW: torch.Tensor or None
+    ):
+        source_image = load_image(image_path, self.device)
+        prompts = ["", prompt_tar]
+
+        start_code, latents_list = self.model.invert(
+            source_image,
+            "",
+            guidance_scale=guidance_scale,
+            num_inference_steps=self.num_ddim_steps,
+            return_intermediates=True,
+        )
         start_code = start_code.expand(len(prompts), -1, -1, -1)
-        
-        # results of direct synthesis
+
+        # 1)  AttentionBase
         editor = AttentionBase()
         regiter_attention_editor_diffusers(self.model, editor)
-        image_fixed = self.model([prompt_tar],
-                            latents=start_code[-1:],
-                            num_inference_steps=self.num_ddim_steps,
-                            guidance_scale=guidance_scale)
-        
-        # hijack the attention module
+        image_fixed = self.model(
+            [prompt_tar],
+            latents=start_code[-1:],
+            num_inference_steps=self.num_ddim_steps,
+            guidance_scale=guidance_scale,
+            control_image=control_image,                      # NEW
+            controlnet_conditioning_scale=self.control_scale  # NEW
+        )
+
+        # 2)  MasaCtrl
         editor = MutualSelfAttentionControl(step, layper)
         regiter_attention_editor_diffusers(self.model, editor)
 
-        # inference the synthesized image
-        image_masactrl = self.model(prompts,
-                            latents=start_code,
-                            guidance_scale=guidance_scale)
-        
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        out_image=np.concatenate((
-                                np.array(image_instruct),
-                                ((source_image[0].permute(1,2,0).detach().cpu().numpy() * 0.5 + 0.5)*255).astype(np.uint8),
-                                (image_masactrl[0].permute(1,2,0).detach().cpu().numpy()*255).astype(np.uint8),
-                                (image_masactrl[-1].permute(1,2,0).detach().cpu().numpy()*255).astype(np.uint8)),1)
-        
-        return Image.fromarray(out_image)
+        image_masactrl = self.model(
+            prompts,
+            latents=start_code,
+            guidance_scale=guidance_scale,
+            control_image=control_image,                      # NEW
+            controlnet_conditioning_scale=self.control_scale  # NEW
+        )
 
+        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+
+        out_image = np.concatenate(
+            (
+                np.array(image_instruct),
+                ((source_image[0].permute(1, 2, 0).detach().cpu().numpy() * 0.5 + 0.5) * 255).astype(np.uint8),
+                (image_masactrl[0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+                (image_masactrl[-1].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+            ),
+            1,
+        )
+
+        return Image.fromarray(out_image)
 
 
 
@@ -176,6 +301,89 @@ image_save_paths={
     }
 
 
+class ControlPreprocessor:
+
+    def __init__(self, device: torch.device, control_type):
+
+        self.device = device
+        self.control_type = control_type
+
+        self.zoe = None
+        self.openpose = None
+        self.canny = None
+        self.normal = None
+
+    def _lazy_init(self):
+        """
+        load aux models
+        """
+        if self.control_type == "canny" and self.canny is None:
+            self.canny = CannyDetector()
+        if self.control_type == "pose" and self.openpose is None:
+            self.openpose = OpenposeDetector.from_pretrained("lllyasviel/Annotators").to(self.device)
+        if self.control_type == "depth" and self.zoe is None:
+            self.zoe = ZoeDetector.from_pretrained("lllyasviel/Annotators").to(self.device)
+        if self.control_type == "normal" and self.normal is None: 
+            self.normal = NormalBaeDetector.from_pretrained("lllyasviel/Annotators").to(self.device)
+
+    def _to_tensor_3ch(self,np_img:np.ndarray) -> torch.Tensor:
+        if np_img.ndim == 2:
+            np_img = np.stack([np_img]*3,axis=-1) # H,W -> H,W,3
+
+        np_img = cv2.resize(np_img,(512,512),interpolation=cv2.INTER_LINEAR)
+
+        if np_img.dtype != np.float32:
+            np_img = np_img.astype(np.float32)
+
+        if np_img.max()>1.0:
+            np_img/=255.0 #[0,225] -> [0,1]
+
+        np_img = np_img.transpose(2,0,1) # C,H,W
+        np_img = np_img[None] # 1,C,H,W
+
+        return torch.from_numpy(np_img).to(self.device)
+
+
+    @torch.no_grad()
+    def __call__(self, image: Image.Image) -> torch.Tensor:
+        self._lazy_init()
+
+        if self.control_type == "canny":
+            edge_img = self.canny(
+                image,
+                low_threshold=100,
+                high_threshold=200,
+            )             
+            edge_np = np.array(edge_img) 
+            return self._to_tensor_3ch(edge_np)
+
+        elif self.control_type == "depth":
+            # ZoeDetector
+            depth = self.zoe(image)         # PIL / np
+            depth_np = np.array(depth).astype(np.float32)
+
+            #  [0,1] 
+            min_v = depth_np.min()
+            max_v = depth_np.max()
+            depth_np = (depth_np - min_v) / (max_v - min_v + 1e-8)
+
+            return self._to_tensor_3ch(depth_np)
+
+        elif self.control_type == "pose":
+            pose_img = self.openpose(image)   # PIL
+            pose_np = np.array(pose_img)      # H,W,3
+            return self._to_tensor_3ch(pose_np)
+
+        elif self.control_type == "normal":   
+            normal_img = self.normal(image)      # PIL RGB，0~255
+            normal_np = np.array(normal_img)     # H,W,3
+            return self._to_tensor_3ch(normal_np)
+
+        else:
+            raise ValueError(f"Unknown control type: {self.control_type}")
+
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--rerun_exist_images', action= "store_true") # rerun existing images
@@ -183,6 +391,13 @@ if __name__ == "__main__":
     parser.add_argument('--output_path', type=str, default="output") # the editing category that needed to run
     parser.add_argument('--edit_category_list', nargs = '+', type=str, default=["0","1","2","3","4","5","6","7","8","9"]) # the editing category that needed to run
     parser.add_argument('--edit_method_list', nargs = '+', type=str, default=["ddim+masactrl","directinversion+masactrl"]) # the editing methods that needed to run
+    parser.add_argument('--control_type', type=str, choices=['canny','depth','pose','normal','None'],default=None,
+                        help="canny / depth / pose / normal / None")
+    parser.add_argument('--controlnet_path', type=str, default=None,
+                        help="ControlNet path")
+    parser.add_argument('--control_scale', type=float, default=1.0,
+                        help="ControlNet conditioning scale")
+    
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -191,12 +406,27 @@ if __name__ == "__main__":
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
     
-        
-    masactrl_editor=MasaCtrlEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu') )
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+ 
+    control_type = args.control_type
+    if control_type is not None:
+        control_type = control_type.lower()
+        if control_type == "none":
+            control_type = None
 
+    masactrl_editor = MasaCtrlEditor(
+        edit_method_list,
+        device,
+        num_ddim_steps=50,
+        control_type=control_type,         # NEW
+        controlnet_path=args.controlnet_path,   # NEW
+        control_scale=args.control_scale   # NEW
+    )
     
     with open(f"{data_path}/mapping_file.json", "r") as f:
         editing_instruction = json.load(f)
+
+    use_control = control_type is not None
     
     for key, item in editing_instruction.items():
         
@@ -222,7 +452,8 @@ if __name__ == "__main__":
                                         prompt_tar=editing_prompt,
                                         guidance_scale=7.5,
                                         step=4,
-                                        layper=10
+                                        layper=10,
+                                        use_control=use_control
                                         )
                 if not os.path.exists(os.path.dirname(present_image_save_path)):
                     os.makedirs(os.path.dirname(present_image_save_path))
@@ -234,3 +465,4 @@ if __name__ == "__main__":
                 print(f"skip image [{image_path}] with [{edit_method}]")
         
         
+

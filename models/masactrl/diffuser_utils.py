@@ -9,9 +9,15 @@ import numpy as np
 from tqdm import tqdm
 from PIL import Image
 
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, ControlNetModel
+
 
 class MasaCtrlPipeline(StableDiffusionPipeline):
+    
+    # register controlnet
+    def __init__(self, controlnet:ControlNetModel = None, **kwargs):
+        super.__init__(**kwargs)
+        self.register_modules(controlnet=controlnet)
 
     def next_step(
         self,
@@ -86,6 +92,56 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
         image = self.vae.decode(latents)['sample']
 
         return image  # range [-1, 1]
+    
+    # prepare control image 
+    def _prepare_control_image(            # ### NEW
+        self,
+        control_image,
+        batch_size,
+        height,
+        width,
+        device,
+        do_classifier_free_guidance: bool,
+    ):
+        """
+        把 PIL / ndarray / tensor 的 control 图变成
+        (B 或 2B, 3, H, W)，范围 [-1, 1]，对齐 diffusers 0.15 的习惯
+        """
+        if control_image is None:
+            return None
+
+        import numpy as np
+        import torch
+        import torch.nn.functional as F
+
+        if isinstance(control_image, Image.Image):
+            control_image = np.array(control_image)
+
+        if isinstance(control_image, np.ndarray):
+            # HWC -> CHW
+            control_image = torch.from_numpy(control_image).permute(2, 0, 1)
+
+        # [0,255] -> [0,1]
+        if control_image.dtype == torch.uint8:
+            control_image = control_image.float() / 255.0
+        else:
+            control_image = control_image.float()
+
+        # [0,1] -> [-1,1]
+        control_image = control_image * 2.0 - 1.0
+
+        # (3,H,W) -> (1,3,H,W)
+        if control_image.ndim == 3:
+            control_image = control_image.unsqueeze(0)
+
+        control_image = F.interpolate(control_image, (height, width), mode="bilinear", align_corners=False)
+        control_image = control_image.to(device)
+
+        # CFG 情况下 batch 要翻倍
+        if do_classifier_free_guidance:
+            control_image = torch.cat([control_image] * 2, dim=0)
+
+        return control_image
 
     @torch.no_grad()
     def __call__(
@@ -103,6 +159,9 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
         ref_intermediate_latents=None,
         return_intermediates=False,
         noise_loss_list=None,
+        # controlnet condition
+        control_image=None,
+        controlnet_conditioning_scale=1.0,
         **kwds):
         DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         if isinstance(prompt, list):
@@ -136,7 +195,8 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
             assert latents.shape == latents_shape, f"The shape of input latent tensor {latents.shape} should equal to predefined one."
 
         # unconditional embedding for classifier free guidance
-        if guidance_scale > 1.:
+        do_cfg = guidance_scale > 1.
+        if do_cfg:
             max_length = text_input.input_ids.shape[-1]
             if neg_prompt:
                 uc_text = neg_prompt
@@ -154,6 +214,20 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
             text_embeddings = torch.cat([unconditional_embeddings, text_embeddings], dim=0)
 
         print("latents shape: ", latents.shape)
+
+
+        # preprocess control image
+        controlnet_cond = None                  # ### NEW
+        if (self.controlnet is not None) and (control_image is not None):
+            controlnet_cond = self._prepare_control_image(
+                control_image,
+                batch_size=batch_size,
+                height=height,
+                width=width,
+                device=DEVICE,
+                do_classifier_free_guidance=do_cfg,
+            )
+
         # iterative sampling
         self.scheduler.set_timesteps(num_inference_steps)
         # print("Valid timesteps: ", reversed(self.scheduler.timesteps))
@@ -166,22 +240,54 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
                 _, latents_cur = latents.chunk(2)
                 latents = torch.cat([latents_ref, latents_cur])
 
-            if guidance_scale > 1.:
+            # CFG：latents 翻倍
+            if do_cfg:
                 model_inputs = torch.cat([latents] * 2)
             else:
                 model_inputs = latents
-            if unconditioning is not None and isinstance(unconditioning, list):
-                _, text_embeddings = text_embeddings.chunk(2)
-                text_embeddings = torch.cat([unconditioning[i].expand(*text_embeddings.shape), text_embeddings]) 
-            # predict the noise
-            noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings).sample
-            if guidance_scale > 1.:
+
+            # 如果有 ControlNet，就走 ControlNet 分支
+            if (self.controlnet is not None) and (controlnet_cond is not None):      # ### NEW
+                # 保证 controlnet_cond 的 batch 维度和 model_inputs 对齐
+                if controlnet_cond.shape[0] != model_inputs.shape[0]:
+                    repeat = model_inputs.shape[0] // controlnet_cond.shape[0]
+                    cond_for_step = controlnet_cond.repeat(repeat, 1, 1, 1)
+                else:
+                    cond_for_step = controlnet_cond
+
+                down_block_res_samples, mid_block_res_sample = self.controlnet(
+                    model_inputs,
+                    t,
+                    encoder_hidden_states=text_embeddings,
+                    controlnet_cond=cond_for_step,
+                    conditioning_scale=controlnet_conditioning_scale,
+                    return_dict=False,
+                )
+
+                noise_pred = self.unet(
+                    model_inputs,
+                    t,
+                    encoder_hidden_states=text_embeddings,
+                    down_block_additional_residuals=down_block_res_samples,
+                    mid_block_additional_residual=mid_block_res_sample,
+                ).sample
+            else:
+                # 原来的 no-controlnet 分支
+                noise_pred = self.unet(
+                    model_inputs,
+                    t,
+                    encoder_hidden_states=text_embeddings
+                ).sample
+
+            # CFG 合成（原样）
+            if do_cfg:
                 noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)
                 noise_pred = noise_pred_uncon + guidance_scale * (noise_pred_con - noise_pred_uncon)
-            # compute the previous noise sample x_t -> x_t-1
+
+            # scheduler step（原样）
             latents, pred_x0 = self.step(noise_pred, t, latents)
             if noise_loss_list is not None:
-                latents = torch.concat((latents[:1]+noise_loss_list[i][:1],latents[1:]))
+                latents = torch.concat((latents[:1]+noise_loss_list[i][:1], latents[1:]))
             latents_list.append(latents)
             pred_x0_list.append(pred_x0)
 
@@ -191,6 +297,34 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
             latents_list = [self.latent2image(img, return_type="pt") for img in latents_list]
             return image, pred_x0_list, latents_list
         return image
+
+
+
+        #     if guidance_scale > 1.:
+        #         model_inputs = torch.cat([latents] * 2)
+        #     else:
+        #         model_inputs = latents
+        #     if unconditioning is not None and isinstance(unconditioning, list):
+        #         _, text_embeddings = text_embeddings.chunk(2)
+        #         text_embeddings = torch.cat([unconditioning[i].expand(*text_embeddings.shape), text_embeddings]) 
+        #     # predict the noise
+        #     noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings).sample
+        #     if guidance_scale > 1.:
+        #         noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)
+        #         noise_pred = noise_pred_uncon + guidance_scale * (noise_pred_con - noise_pred_uncon)
+        #     # compute the previous noise sample x_t -> x_t-1
+        #     latents, pred_x0 = self.step(noise_pred, t, latents)
+        #     if noise_loss_list is not None:
+        #         latents = torch.concat((latents[:1]+noise_loss_list[i][:1],latents[1:]))
+        #     latents_list.append(latents)
+        #     pred_x0_list.append(pred_x0)
+
+        # image = self.latent2image(latents, return_type="pt")
+        # if return_intermediates:
+        #     pred_x0_list = [self.latent2image(img, return_type="pt") for img in pred_x0_list]
+        #     latents_list = [self.latent2image(img, return_type="pt") for img in latents_list]
+        #     return image, pred_x0_list, latents_list
+        # return image
 
     @torch.no_grad()
     def invert(

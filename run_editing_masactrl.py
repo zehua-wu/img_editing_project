@@ -392,7 +392,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_path', type=str, default="data") # the editing category that needed to run
     parser.add_argument('--output_path', type=str, default="output") # the editing category that needed to run
     parser.add_argument('--edit_category_list', nargs = '+', type=str, default=["0","1","2","3","4","5","6","7","8","9"]) # the editing category that needed to run
-    parser.add_argument('--edit_method_list', nargs = '+', type=str, default=["ddim+masactrl","directinversion+masactrl"]) # the editing methods that needed to run
+    parser.add_argument('--edit_method_list', nargs = '+', type=str, default=["ddim+masactrl"], choices=["ddim+masactrl","directinversion+masactrl"]) # the editing methods that needed to run
     parser.add_argument('--control_type', type=str, choices=['canny','depth','pose','normal','None'],default=None,
                         help="canny / depth / pose / normal / None")
     parser.add_argument('--controlnet_path', type=str, default=None,

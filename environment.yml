@@ -1,11 +1,7 @@
-name: p2p
+#name: p2p
 channels:
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
   - conda-forge
   - pytorch
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free/
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/pytorch/
   - defaults
 dependencies:
   - _libgcc_mutex=0.1=main
@@ -230,4 +226,4 @@ dependencies:
       - wcwidth==0.2.14
       - widgetsnbextension==4.0.15
       - zipp==3.23.0
-prefix: /root/autodl-tmp/conda/envs/p2p
+#prefix: /root/autodl-tmp/conda/envs/p2p

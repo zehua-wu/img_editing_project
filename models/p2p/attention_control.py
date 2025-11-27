@@ -108,30 +108,45 @@ class LocalBlend:
     def __call__(self, x_t, attention_store):
         self.counter += 1
         if self.counter > self.start_blend:
+            # Use custom latent mask if provided
+            if self.custom_mask is not None:
+                b = x_t.shape[0]
+                # Broadcast to batch: (B, 1, 64, 64)
+                mask = self.custom_mask.expand(b, -1, -1, -1)
+            else:
+                maps = attention_store["down_cross"][2:4] + attention_store["up_cross"][:3]
+                maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 16, 16, MAX_NUM_WORDS) for item in maps]
+                maps = torch.cat(maps, dim=1)
+                mask = self.get_mask(maps, self.alpha_layers, True)
+                if self.substruct_layers is not None:
+                    maps_sub = ~self.get_mask(maps, self.substruct_layers, False)
+                    mask = mask * maps_sub
 
-            maps = attention_store["down_cross"][2:4] + attention_store["up_cross"][:3]
-            maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 16, 16, MAX_NUM_WORDS) for item in maps]
-            maps = torch.cat(maps, dim=1)
-            mask = self.get_mask(maps, self.alpha_layers, True)
-            if self.substruct_layers is not None:
-                maps_sub = ~self.get_mask(maps, self.substruct_layers, False)
-                mask = mask * maps_sub
             mask = mask.float()
             x_t = x_t[:1] + mask * (x_t - x_t[:1])
         return x_t
 
-    def __init__(self, prompts, words, substruct_words=None, start_blend=0.2, th=(.3, .3),
-                 tokenizer=None, device="cuda",num_ddim_steps=50):
-        alpha_layers = torch.zeros(len(prompts),  1, 1, 1, 1, MAX_NUM_WORDS)
+    def __init__(
+            self,
+            prompts,
+            words,
+            substruct_words=None,
+            start_blend=0.2,
+            th=(.3, .3),
+            tokenizer=None,
+            device="cuda",
+            num_ddim_steps=50,
+            latent_mask=None):
+        alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
         for i, (prompt, words_) in enumerate(zip(prompts, words)):
             if type(words_) is str:
                 words_ = [words_]
             for word in words_:
                 ind = get_word_inds(prompt, word, tokenizer)
                 alpha_layers[i, :, :, :, :, ind] = 1
-        
+
         if substruct_words is not None:
-            substruct_layers = torch.zeros(len(prompts),  1, 1, 1, 1, MAX_NUM_WORDS)
+            substruct_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
             for i, (prompt, words_) in enumerate(zip(prompts, substruct_words)):
                 if type(words_) is str:
                     words_ = [words_]
@@ -143,10 +158,17 @@ class LocalBlend:
             self.substruct_layers = None
         self.alpha_layers = alpha_layers.to(device)
         self.start_blend = int(start_blend * num_ddim_steps)
-        self.counter = 0 
-        self.th=th
-        
-        
+        self.counter = 0
+        self.th = th
+
+        # Store custom latent mask
+        if latent_mask is not None:
+            latent_mask = torch.as_tensor(latent_mask, dtype=torch.float16, device=device)
+            latent_mask = latent_mask.unsqueeze(1)
+            self.custom_mask = latent_mask
+        else:
+            self.custom_mask = None
+
 class EmptyControl:
 
     def step_callback(self, x_t):

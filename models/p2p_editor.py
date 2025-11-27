@@ -2,15 +2,31 @@
 from models.p2p.scheduler_dev import DDIMSchedulerDev
 from models.p2p.inversion import NegativePromptInversion, NullInversion, DirectInversion
 from models.p2p.attention_control import EmptyControl, AttentionStore, make_controller
-from models.p2p.p2p_guidance_forward import p2p_guidance_forward, direct_inversion_p2p_guidance_forward, direct_inversion_p2p_guidance_forward_add_target,p2p_guidance_forward_single_branch
+# new
+from models.p2p.p2p_guidance_forward import (
+    p2p_guidance_forward,
+    direct_inversion_p2p_guidance_forward,
+    p2p_guidance_forward_single_branch,
+    p2p_guidance_forward_ctrl,
+)
 from models.p2p.proximal_guidance_forward import proximal_guidance_forward
 from diffusers import StableDiffusionPipeline
 from utils.utils import load_512, latent2image, txt_draw
 from PIL import Image
 import numpy as np
+# we add this for prepare_control_hint
+import torch
+import cv2
+
+# here: i only change this, different from Gen3
+# pip show diffusers
+# Version: 0.14.0
+from diffusers import ControlNetModel
 
 class P2PEditor:
-    def __init__(self, method_list, device, num_ddim_steps=50) -> None:
+    def __init__(self, method_list, device, num_ddim_steps=50, controlnet_path=None, control_scale=1.0) -> None:
+        # controlnet_path: cnet path
+        # control_scale: influence how large
         self.device=device
         self.method_list=method_list
         self.num_ddim_steps=num_ddim_steps
@@ -23,6 +39,14 @@ class P2PEditor:
         self.ldm_stable = StableDiffusionPipeline.from_pretrained(
             "CompVis/stable-diffusion-v1-4", scheduler=self.scheduler).to(device)
         self.ldm_stable.scheduler.set_timesteps(self.num_ddim_steps)
+
+        # add one "with_ControlNet" edit method
+        self.controlnet = None
+        if controlnet_path is not None:
+            self.controlnet = ControlNetModel.from_pretrained(
+                controlnet_path
+            ).to(device)
+        self.control_scale = control_scale
 
         
     def __call__(self, 
@@ -129,8 +153,34 @@ class P2PEditor:
                                         blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
         elif edit_method=="ablation_directinversion_add-source+p2p":
             return self.edit_image_directinversion_add_source(image_path=image_path, prompt_src=prompt_src, prompt_tar=prompt_tar, guidance_scale=guidance_scale, 
-                                        cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
-                                        blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
+                            cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
+                            blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
+        # we try add this
+        elif edit_method == "null-text-inversion+p2p_ctrl":
+            return self.edit_image_null_text_inversion_ctrl(
+                image_path=image_path,
+                prompt_src=prompt_src,
+                prompt_tar=prompt_tar,
+                guidance_scale=guidance_scale,
+                cross_replace_steps=cross_replace_steps,
+                self_replace_steps=self_replace_steps,
+                blend_word=blend_word,
+                eq_params=eq_params,
+                is_replace_controller=is_replace_controller,
+            )
+        elif edit_method == "ddim+p2p_ctrl":
+            return self.edit_image_ddim_ctrl(
+                image_path=image_path,
+                prompt_src=prompt_src,
+                prompt_tar=prompt_tar,
+                guidance_scale=guidance_scale,
+                cross_replace_steps=cross_replace_steps,
+                self_replace_steps=self_replace_steps,
+                blend_word=blend_word,
+                eq_params=eq_params,
+                is_replace_controller=is_replace_controller,
+            )
+        
         else:
             raise NotImplementedError(f"No edit method named {edit_method}")
 
@@ -196,6 +246,84 @@ class P2PEditor:
 
         return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
 
+    # we add
+    def edit_image_ddim_ctrl(
+        self,
+        image_path,
+        prompt_src,
+        prompt_tar,
+        guidance_scale,
+        cross_replace_steps,
+        self_replace_steps,
+        blend_word,
+        eq_params,
+        is_replace_controller,
+    ):
+        image_gt = load_512(image_path)
+        control_hint = self.prepare_control_hint(image_gt)
+
+        # prompts
+        prompts = [prompt_src, prompt_tar]
+
+        # -------------------- 2. DDIM inversion --------------------
+        null_inversion = NullInversion(
+            model=self.ldm_stable,
+            num_ddim_steps=self.num_ddim_steps
+        )
+        _, _, x_stars, uncond_embeddings = null_inversion.invert(
+            image_gt=image_gt,
+            prompt=prompt_src,
+            guidance_scale=guidance_scale,
+            num_inner_steps=0
+        )
+        x_t = x_stars[-1]
+
+        # rec: no controlnet
+        controller = AttentionStore()
+        reconstruct_latent, x_t = p2p_guidance_forward(
+            model=self.ldm_stable,
+            prompt=[prompt_src],
+            controller=controller,
+            latent=x_t,
+            num_inference_steps=self.num_ddim_steps,
+            guidance_scale=guidance_scale,
+            generator=None,
+            uncond_embeddings=uncond_embeddings
+        )
+        reconstruct_image = latent2image(self.ldm_stable.vae, reconstruct_latent)[0]
+
+        # edit :Cnet
+        controller = make_controller(
+            pipeline=self.ldm_stable,
+            prompts=prompts,
+            is_replace_controller=is_replace_controller,
+            cross_replace_steps={'default_': cross_replace_steps},
+            self_replace_steps=self_replace_steps,
+            blend_words=blend_word,
+            equilizer_params=eq_params,
+            num_ddim_steps=self.num_ddim_steps,
+            device=self.device
+        )
+
+        latents, _ = p2p_guidance_forward_ctrl(
+            model=self.ldm_stable,
+            controlnet=self.controlnet,
+            control_hint=control_hint,
+            prompt=prompts,
+            controller=controller,
+            latent=x_t,
+            num_inference_steps=self.num_ddim_steps,
+            guidance_scale=guidance_scale,
+            generator=None,
+            uncond_embeddings=uncond_embeddings,
+            control_scale=self.control_scale,
+        )
+
+        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+        return Image.fromarray(
+            np.concatenate((image_instruct, image_gt, reconstruct_image, images[-1]), axis=1)
+        ) 
     def edit_image_null_text_inversion(
         self,
         image_path,
@@ -257,6 +385,95 @@ class P2PEditor:
         images = latent2image(model=self.ldm_stable.vae, latents=latents)
 
         return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+    # we add this
+    def edit_image_null_text_inversion_ctrl(
+        self,
+        image_path,
+        prompt_src,
+        prompt_tar,
+        guidance_scale=7.5,
+        cross_replace_steps=0.4,
+        self_replace_steps=0.6,
+        blend_word=None,
+        eq_params=None,
+        is_replace_controller=False,
+    ):
+        image_gt = load_512(image_path)
+        prompts = [prompt_src, prompt_tar]
+
+        null_inversion = NullInversion(model=self.ldm_stable,
+                                       num_ddim_steps=self.num_ddim_steps)
+        _, _, x_stars, uncond_embeddings = null_inversion.invert(
+            image_gt=image_gt, prompt=prompt_src, guidance_scale=guidance_scale
+        )
+        x_t = x_stars[-1]
+
+        #    PURE RE-construction, no cnet
+        #    !!must same with no CNET
+        controller = AttentionStore()
+        reconstruct_latent, _ = p2p_guidance_forward(
+            model=self.ldm_stable,
+            prompt=[prompt_src],
+            controller=controller,
+            latent=x_t,
+            num_inference_steps=self.num_ddim_steps,
+            guidance_scale=guidance_scale,
+            generator=None,
+            uncond_embeddings=uncond_embeddings,
+        )
+
+        reconstruct_image = latent2image(
+            model=self.ldm_stable.vae, latents=reconstruct_latent
+        )[0]
+        image_instruct = txt_draw(
+            f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}"
+        )
+
+        # CNet HING
+        control_image = Image.fromarray(image_gt)
+        control_hint = self.prepare_control_hint(control_image)
+
+        ########## Edit with P2P + ControlNet ##########
+        cross_replace_steps = {
+            "default_": cross_replace_steps,
+        }
+
+        controller = make_controller(
+            pipeline=self.ldm_stable,
+            prompts=prompts,
+            is_replace_controller=is_replace_controller,
+            cross_replace_steps=cross_replace_steps,
+            self_replace_steps=self_replace_steps,
+            blend_words=blend_word,
+            equilizer_params=eq_params,
+            num_ddim_steps=self.num_ddim_steps,
+            device=self.device,
+        )
+
+        # only here we use ControlNet + P2P
+        latents, _ = p2p_guidance_forward_ctrl(
+            model=self.ldm_stable,
+            controlnet=self.controlnet,
+            control_hint=control_hint,
+            prompt=prompts,
+            controller=controller,
+            latent=x_t,
+            num_inference_steps=self.num_ddim_steps,
+            guidance_scale=guidance_scale,
+            generator=None,
+            uncond_embeddings=uncond_embeddings,
+            control_scale=self.control_scale,
+        )
+
+        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+        # txt.img + original img + rec img + gen img
+        return Image.fromarray(
+            np.concatenate(
+                (image_instruct, image_gt, reconstruct_image, images[-1]), axis=1
+            )
+        )
 
     def edit_image_null_text_inversion_single_branch(
         self,
@@ -408,7 +625,6 @@ class P2PEditor:
                         dilate_mask=dilate_mask)
 
         images = latent2image(model=self.ldm_stable.vae, latents=latents)
-
 
         return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
 
@@ -976,3 +1192,19 @@ class P2PEditor:
         image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
         
         return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+    def prepare_control_hint(self, control_image: Image.Image):
+        import cv2
+        import numpy as np
+        import torch
+
+        img = np.array(control_image)          # H,W,3 RGB (uint8)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        edges = cv2.Canny(img_gray, 100, 200)
+
+        edges = edges.astype(np.float32) / 255.0
+        edges = np.stack([edges] * 3, axis=-1)         # H,W,3
+        edges = cv2.resize(edges, (512, 512), interpolation=cv2.INTER_LINEAR)
+
+        arr = edges[None].transpose(0, 3, 1, 2)        # [1,3,512,512]
+        return torch.from_numpy(arr).to(self.device)

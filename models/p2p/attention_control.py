@@ -1,3 +1,34 @@
+# for diffuser newer version: padding
+from diffusers.models.attention import CrossAttention
+def _reshape_heads_to_batch_dim(self, tensor):
+    """
+    input: tensor [batch, seq_len, dim]
+    output: [batch * heads, seq_len, dim // heads]
+    """
+    batch_size, seq_len, dim = tensor.shape
+    head_dim = dim // self.heads
+    tensor = tensor.view(batch_size, seq_len, self.heads, head_dim)
+    tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size * self.heads, seq_len, head_dim)
+    return tensor
+
+def _reshape_batch_dim_to_heads(self, tensor):
+    """
+    input: tensor [batch * heads, seq_len, head_dim]
+    output: [batch, seq_len, heads * head_dim]
+    """
+    batch_size_times_heads, seq_len, head_dim = tensor.shape
+    batch_size = batch_size_times_heads // self.heads
+    tensor = tensor.view(batch_size, self.heads, seq_len, head_dim)
+    tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size, seq_len, self.heads * head_dim)
+    return tensor
+
+# only works when CrossAttention fails then newer version applies
+if not hasattr(CrossAttention, "reshape_heads_to_batch_dim"):
+    CrossAttention.reshape_heads_to_batch_dim = _reshape_heads_to_batch_dim
+if not hasattr(CrossAttention, "reshape_batch_dim_to_heads"):
+    CrossAttention.reshape_batch_dim_to_heads = _reshape_batch_dim_to_heads
+
+
 import torch
 import torch.nn.functional as nnf
 import abc
@@ -17,33 +48,63 @@ def register_attention_control(model, controller):
         else:
             to_out = self.to_out
 
-        def forward(x, context=None, mask=None, **kwargs):
-            if isinstance(context, dict):  # NOTE: compatible with ELITE (0.11.1)
-                context = context['CONTEXT_TENSOR']
+        def forward(
+            hidden_states,
+            encoder_hidden_states=None,
+            attention_mask=None,
+            **cross_attention_kwargs
+        ):
+            
+            x = hidden_states
+
+            # context：if encoder_hidden_states then cross-attn, else self-attn
+            if isinstance(encoder_hidden_states, dict):  # !! here compatible 
+                encoder_hidden_states = encoder_hidden_states.get("CONTEXT_TENSOR", None)
+
+            if encoder_hidden_states is None:
+                context = x
+                is_cross = False
+            else:
+                context = encoder_hidden_states
+                is_cross = True
+
             batch_size, sequence_length, dim = x.shape
             h = self.heads
+
+            # Q from x || K/V from context 
             q = self.to_q(x)
-            is_cross = context is not None
-            context = context if is_cross else x
             k = self.to_k(context)
             v = self.to_v(context)
+
+            # reshape into multi-head 
             q = self.reshape_heads_to_batch_dim(q)
             k = self.reshape_heads_to_batch_dim(k)
             v = self.reshape_heads_to_batch_dim(v)
 
+            # score
             sim = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
 
-            if mask is not None:
-                mask = mask.reshape(batch_size, -1)
+            # attention_mask api
+            if attention_mask is not None:
+                # attention_mask usually [batch, 1, seq_len]
                 max_neg_value = -torch.finfo(sim.dtype).max
-                mask = mask[:, None, :].repeat(h, 1, 1)
-                sim.masked_fill_(~mask, max_neg_value)
+                # into [batch*heads, seq_q, seq_k]
+                # repeat to each head, too simple
+                attn_mask = attention_mask.repeat(h, 1, 1)
+                sim.masked_fill_(~attn_mask, max_neg_value)
 
-            # attention, what we cannot get enough of
             attn = sim.softmax(dim=-1)
+
+            # P2P controller to edit
+            # here MUST BE THIS!
             attn = controller(attn, is_cross, place_in_unet)
+
             out = torch.einsum("b i j, b j d -> b i d", attn, v)
+
+            # back to batch*heads
             out = self.reshape_batch_dim_to_heads(out)
+
+            # U-Net out
             return to_out(out)
 
         return forward

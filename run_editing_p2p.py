@@ -126,7 +126,32 @@ if __name__ == "__main__":
         editing_prompt = item["editing_prompt"].replace("[", "").replace("]", "")
         image_path = os.path.join(f"{data_path}/annotation_images", item["image_path"])
         editing_instruction = item["editing_instruction"]
-        blended_word = item["blended_word"].split(" ") if item["blended_word"] != "" else []
+        # blended_word = item["blended_word"].split(" ") if item["blended_word"] != "" else []
+       
+        # ===== SemanticControl Blended Word =======
+        blended_raw = item.get("blended_word", "")
+        if blended_raw != "":
+            blended_tokens = blended_raw.split()
+        else:
+            blended_tokens = []
+
+        #  prompts = [src, tar]
+        #  words   = ((src_words...), (tar_words...))
+        if len(blended_tokens) >= 2:
+            # source: blended_tokens[0], target: blended_tokens[1]
+            blend_word_struct = (
+                (blended_tokens[0],),  # 对应 source prompt
+                (blended_tokens[1],),  # 对应 target prompt
+            )
+            eq_params = {
+                "words": (blended_tokens[1],),  # target token 提高权重（P2P equalizer β）
+                "values": (2,),
+            }
+        else:
+            blend_word_struct = None
+            eq_params = None
+
+       
         mask = Image.fromarray(np.uint8(mask_decode(item["mask"])[:,:,np.newaxis].repeat(3,2))).convert("L")
 
         for edit_method in edit_method_list:
@@ -146,12 +171,8 @@ if __name__ == "__main__":
                                             guidance_scale=7.5,
                                             cross_replace_steps=0.4,
                                             self_replace_steps=0.6,
-                                            blend_word=(((blended_word[0], ),
-                                                        (blended_word[1], ))) if len(blended_word) else None,
-                                            eq_params={
-                                                "words": (blended_word[1], ),
-                                                "values": (2, )
-                                            } if len(blended_word) else None,
+                                            blend_word= blend_word_struct,
+                                            eq_params= eq_params,
                                             proximal="l0",
                                             quantile=0.75,
                                             use_inversion_guidance=True,
@@ -172,12 +193,8 @@ if __name__ == "__main__":
                         guidance_scale=7.5,
                         cross_replace_steps=0.4,
                         self_replace_steps=0.6,
-                        blend_word=(((blended_word[0], ),
-                                    (blended_word[1], ))) if len(blended_word) else None,
-                        eq_params={
-                            "words": (blended_word[1], ),
-                            "values": (2, )
-                        } if len(blended_word) else None,
+                        blend_word= blend_word_struct,
+                        eq_params= eq_params,
                         proximal="l0",
                         quantile=0.75,
                         use_inversion_guidance=True,

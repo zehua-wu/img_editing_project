@@ -32,6 +32,7 @@ if not hasattr(CrossAttention, "reshape_batch_dim_to_heads"):
 import torch
 import torch.nn.functional as nnf
 import abc
+import numpy as np
 
 from utils.utils import get_word_inds, get_time_words_attention_alpha
 from models.p2p import seq_aligner
@@ -464,3 +465,126 @@ def make_controller(pipeline,
                                        local_blend=lb, 
                                        controller=controller)
     return controller
+
+
+
+
+
+# ============ Semantic Control =================
+def build_semantic_alpha_from_store_multi(
+    attention_store: "AttentionStore",
+    prompt: str,
+    alpha_words,
+    tokenizer,
+    device,
+):
+    """
+    从 AttentionStore 中构建 multi-scale semantic alpha。
+
+    返回:
+        dict[int, torch.Tensor]  形如 { side: alpha_side }，
+        每个 alpha_side 的形状为 [1, 1, side, side]，值在 [0,1]。
+
+    做法：
+      1. 从 attention_store.get_average_attention() 拿 avg cross-attn
+      2. 对 alpha_words 对应 token 的注意力做平均（先 token, 再 batch*head）
+      3. 按 spatial 分辨率 side = sqrt(seq_len) 分桶，每桶平均
+      4. 每个 side 内做 min-max 归一化
+    """
+    if not alpha_words:
+        return None
+
+    # 1) 找到 alpha_words 对应的 token indices
+    token_inds = []
+    for w in alpha_words:
+        inds = get_word_inds(prompt, w, tokenizer)
+        if len(inds) > 0:
+            token_inds.extend(list(inds))
+
+    if len(token_inds) == 0:
+        return None
+
+    token_inds = np.unique(np.asarray(token_inds, dtype=np.int64))
+
+    # 2) 从 AttentionStore 拿平均注意力
+    avg_attn = attention_store.get_average_attention()  # dict: key -> list[tensor]
+
+    # side -> list of [1,1,side,side] maps
+    collected_by_side = {}
+
+    for key in ["down_cross", "mid_cross", "up_cross"]:
+        if key not in avg_attn:
+            continue
+        for attn in avg_attn[key]:
+            # attn: [B*H, seq_len, num_tokens]
+            bh, seq_len, num_tokens = attn.shape
+
+            if np.max(token_inds) >= num_tokens:
+                continue
+
+            side = int(seq_len ** 0.5)
+            # 只保留方形且不过大
+            if side * side != seq_len or side > 64:
+                continue
+
+            # 选中 alpha_words 对应 token 的 attention
+            idx = torch.as_tensor(token_inds, device=attn.device, dtype=torch.long)
+            # 先在 token 维上平均: [bh, seq_len, #tokens] -> [bh, seq_len]
+            attn_sel = attn[:, :, idx].mean(-1)
+            # 再在 batch*head 上平均: [bh, seq_len] -> [seq_len]
+            attn_sel = attn_sel.mean(0)
+
+            attn_map = attn_sel.reshape(1, 1, side, side)  # [1,1,side,side]
+            collected_by_side.setdefault(side, []).append(attn_map)
+
+    if not collected_by_side:
+        return None
+
+    alpha_dict = {}
+    for side, maps in collected_by_side.items():
+        alpha = torch.stack(maps, dim=0).mean(0)  # [1,1,side,side]
+        alpha = alpha.to(device)
+        alpha = alpha - alpha.min()
+        if alpha.max() > 0:
+            alpha = alpha / alpha.max()
+        alpha_dict[side] = alpha
+
+    return alpha_dict
+
+
+def pick_alpha_for_feat(semantic_alpha, feat_hw):
+    """
+    semantic_alpha:
+        - Tensor: [1,1,h,w]，统一 resize 到目标大小
+        - dict: {side: alpha_side}，选择最接近 H 的 side，再 resize
+
+    feat_hw: (H, W)
+    返回: [1,1,H,W] 的 tensor，或者 None（不用 mask）
+    """
+    H, W = feat_hw
+
+    if semantic_alpha is None:
+        return None
+
+    # 单一 alpha：直接插值
+    if isinstance(semantic_alpha, torch.Tensor):
+        return nnf.interpolate(
+            semantic_alpha,
+            size=(H, W),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+    # multi-scale dict
+    if isinstance(semantic_alpha, dict) and len(semantic_alpha) > 0:
+        sides = sorted(semantic_alpha.keys())
+        nearest = min(sides, key=lambda s: abs(s - H))
+        base = semantic_alpha[nearest]
+        return nnf.interpolate(
+            base,
+            size=(H, W),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+    return None

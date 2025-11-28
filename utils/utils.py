@@ -3,6 +3,8 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import numpy as np
 import PIL.Image as Image
 import torch
+import torch.nn.functional as F
+import re
 
 def slerp(val, low, high):
     """ 
@@ -154,3 +156,54 @@ def txt_draw(text,
     plt.close('all')
     
     return image
+
+
+
+
+# SemanticControl-utils: pick non conflicting words
+
+def pick_non_conflicting_words(
+        original_prompt:str,
+        blended_word:str
+):
+    """
+    extract non conflicting words based on the original prompt and blended word
+    Example:
+        original_prompt = "blue light, a black and white [cat] is playing with a flower"
+        blended_word    = "cat dog"
+    Output: ["blue", "light", "black", "white", "playing", "flower"]
+    """
+
+    conflict_tokens = []
+    if blended_word is not None:
+        if isinstance(blended_word,str):
+            conflict_tokens = blended_word.strip().split()
+        elif isinstance(blended_word,(list,tuple)):
+            conflict_tokens = list(blended_word)
+    conflict_set = set(w.lower() for w in conflict_tokens)
+
+    # simple clean
+    prompt_clean = original_prompt.replace('[','').replace(']', '')
+
+    # simple tokenization(keep words/strings)
+    tokens = re.findall(r"[A-Za-z]",prompt_clean.lower())
+
+    # simple stopping words
+    stopwords = [
+        "a", "an", "the", "is", "are", "am",
+        "and", "or", "of", "with", "in", "on", "at", "to", "for", "by",
+    ]
+    
+    alpha_words = []
+    for w in tokens:
+        if w in stopwords:
+            continue
+        if w in conflict_set:
+            continue
+        alpha_words.append(w)
+    
+
+    alpha_words = list(dict.fromkeys(alpha_words))
+    return alpha_words
+
+

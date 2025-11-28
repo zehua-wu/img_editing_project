@@ -180,6 +180,8 @@ def pick_non_conflicting_words(
             conflict_tokens = blended_word.strip().split()
         elif isinstance(blended_word,(list,tuple)):
             conflict_tokens = list(blended_word)
+    print(blended_word)
+    print(conflict_tokens)
     conflict_set = set(w.lower() for w in conflict_tokens)
 
     # simple clean

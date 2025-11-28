@@ -176,12 +176,17 @@ def pick_non_conflicting_words(
 
     conflict_tokens = []
     if blended_word is not None:
-        if isinstance(blended_word,str):
+        if isinstance(blended_word, str):
             conflict_tokens = blended_word.strip().split()
-        elif isinstance(blended_word,(list,tuple)):
-            conflict_tokens = list(blended_word)
-    print(blended_word)
-    print(conflict_tokens)
+        elif isinstance(blended_word, (list, tuple)):
+            for item in blended_word:
+                if isinstance(item, (list, tuple)):
+                    for sub_item in item:
+                        if isinstance(sub_item, str):
+                            conflict_tokens.append(sub_item)
+                elif isinstance(item, str):
+                    conflict_tokens.append(item)
+                    
     conflict_set = set(w.lower() for w in conflict_tokens)
 
     # simple clean

@@ -1,7 +1,7 @@
 
 from models.p2p.scheduler_dev import DDIMSchedulerDev
 from models.p2p.inversion import NegativePromptInversion, NullInversion, DirectInversion
-from models.p2p.attention_control import EmptyControl, AttentionStore, make_controller
+from models.p2p.attention_control import EmptyControl, AttentionStore, make_controller, build_semantic_alpha_from_store_multi
 # new
 from models.p2p.p2p_guidance_forward import (
     p2p_guidance_forward,
@@ -11,7 +11,7 @@ from models.p2p.p2p_guidance_forward import (
 )
 from models.p2p.proximal_guidance_forward import proximal_guidance_forward
 from diffusers import StableDiffusionPipeline
-from utils.utils import load_512, latent2image, txt_draw
+from utils.utils import load_512, latent2image, txt_draw, pick_non_conflicting_words
 from PIL import Image
 import numpy as np
 # we add this for prepare_control_hint
@@ -288,6 +288,90 @@ class P2PEditor:
         return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
 
     # we add
+    # def edit_image_ddim_ctrl(
+    #     self,
+    #     image_path,
+    #     prompt_src,
+    #     prompt_tar,
+    #     guidance_scale,
+    #     cross_replace_steps,
+    #     self_replace_steps,
+    #     blend_word,
+    #     eq_params,
+    #     is_replace_controller,
+    # ):
+    #     image_gt = load_512(image_path)
+    #     control_hint = self.prepare_control_hint(image_gt)
+
+    #     # prompts
+    #     prompts = [prompt_src, prompt_tar]
+
+    #     # -------------------- 2. DDIM inversion --------------------
+    #     null_inversion = NullInversion(
+    #         model=self.ldm_stable,
+    #         num_ddim_steps=self.num_ddim_steps
+    #     )
+    #     _, _, x_stars, uncond_embeddings = null_inversion.invert(
+    #         image_gt=image_gt,
+    #         prompt=prompt_src,
+    #         guidance_scale=guidance_scale,
+    #         num_inner_steps=0
+    #     )
+    #     x_t = x_stars[-1]
+
+    #     # rec: no controlnet
+    #     controller = AttentionStore()
+    #     reconstruct_latent, x_t = p2p_guidance_forward(
+    #         model=self.ldm_stable,
+    #         prompt=[prompt_src],
+    #         controller=controller,
+    #         latent=x_t,
+    #         num_inference_steps=self.num_ddim_steps,
+    #         guidance_scale=guidance_scale,
+    #         generator=None,
+    #         uncond_embeddings=uncond_embeddings
+    #     )
+    #     reconstruct_image = latent2image(self.ldm_stable.vae, reconstruct_latent)[0]
+
+    #     # edit :Cnet
+    #     controller = make_controller(
+    #         pipeline=self.ldm_stable,
+    #         prompts=prompts,
+    #         is_replace_controller=is_replace_controller,
+    #         cross_replace_steps={'default_': cross_replace_steps},
+    #         self_replace_steps=self_replace_steps,
+    #         blend_words=blend_word,
+    #         equilizer_params=eq_params,
+    #         num_ddim_steps=self.num_ddim_steps,
+    #         device=self.device
+    #     )
+
+    #     latents, _ = p2p_guidance_forward_ctrl(
+    #         model=self.ldm_stable,
+    #         controlnet=self.controlnet,
+    #         control_hint=control_hint,
+    #         prompt=prompts,
+    #         controller=controller,
+    #         latent=x_t,
+    #         num_inference_steps=self.num_ddim_steps,
+    #         guidance_scale=guidance_scale,
+    #         generator=None,
+    #         uncond_embeddings=uncond_embeddings,
+    #         control_scale=self.control_scale,
+    #     )
+
+    #     images = latent2image(model=self.ldm_stable.vae, latents=latents)
+    #     image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+
+
+    #     # save control hint
+    #     control_hint_recover = self.recover_control_hint(control_hint)
+
+    #     return Image.fromarray(
+    #         np.concatenate((image_instruct, image_gt, reconstruct_image, images[-1]), axis=1)
+    #     ) , Image.fromarray(control_hint_recover)
+
+    # ========== SemanticControl Version ==============
     def edit_image_ddim_ctrl(
         self,
         image_path,
@@ -300,198 +384,65 @@ class P2PEditor:
         eq_params,
         is_replace_controller,
     ):
+        """
+        带 ControlNet 的 P2P 编辑版本 + Semantic alpha gating:
+        1) Null-Text inversion
+        2) 使用 source prompt 做一次重建，借助 AttentionStore 提取 cross-attn
+        3) 从重建阶段 AttentionStore 中构建 multi-scale semantic alpha
+        4) 编辑阶段：ControlNet + P2P controller + semantic alpha gating
+        """
+        # ---- 0) 读图 & ControlNet 条件 ----
         image_gt = load_512(image_path)
         control_hint = self.prepare_control_hint(image_gt)
 
-        # prompts
         prompts = [prompt_src, prompt_tar]
 
-        # -------------------- 2. DDIM inversion --------------------
+        # ---- 1) Null-Text inversion ----
         null_inversion = NullInversion(
             model=self.ldm_stable,
-            num_ddim_steps=self.num_ddim_steps
+            num_ddim_steps=self.num_ddim_steps,
         )
         _, _, x_stars, uncond_embeddings = null_inversion.invert(
             image_gt=image_gt,
             prompt=prompt_src,
             guidance_scale=guidance_scale,
-            num_inner_steps=0
+            num_inner_steps=0,
         )
         x_t = x_stars[-1]
 
-        # rec: no controlnet
-        controller = AttentionStore()
+        # ---- 2) 重建阶段（不加 ControlNet），记录 cross-attn ----
+        controller_rec = AttentionStore()
         reconstruct_latent, x_t = p2p_guidance_forward(
             model=self.ldm_stable,
             prompt=[prompt_src],
-            controller=controller,
-            latent=x_t,
+            controller=controller_rec,
             num_inference_steps=self.num_ddim_steps,
             guidance_scale=guidance_scale,
             generator=None,
-            uncond_embeddings=uncond_embeddings
+            latent=x_t,
+            uncond_embeddings=uncond_embeddings,
         )
         reconstruct_image = latent2image(self.ldm_stable.vae, reconstruct_latent)[0]
 
-        # edit :Cnet
+        # ---- 3) Semantic alpha：从重建阶段的 AttentionStore 中构建 multi-scale α ----
+        alpha_words = pick_non_conflicting_words(
+            original_prompt=prompt_src,
+            blended_word=blend_word,
+        )
+        semantic_alpha = build_semantic_alpha_from_store_multi(
+            attention_store=controller_rec,
+            prompt=prompt_src,
+            alpha_words=alpha_words,
+            tokenizer=self.ldm_stable.tokenizer,
+            device=self.device,
+        )
+
+        # ---- 4) 编辑阶段：ControlNet + P2P controller + semantic alpha gating ----
         controller = make_controller(
             pipeline=self.ldm_stable,
             prompts=prompts,
             is_replace_controller=is_replace_controller,
-            cross_replace_steps={'default_': cross_replace_steps},
-            self_replace_steps=self_replace_steps,
-            blend_words=blend_word,
-            equilizer_params=eq_params,
-            num_ddim_steps=self.num_ddim_steps,
-            device=self.device
-        )
-
-        latents, _ = p2p_guidance_forward_ctrl(
-            model=self.ldm_stable,
-            controlnet=self.controlnet,
-            control_hint=control_hint,
-            prompt=prompts,
-            controller=controller,
-            latent=x_t,
-            num_inference_steps=self.num_ddim_steps,
-            guidance_scale=guidance_scale,
-            generator=None,
-            uncond_embeddings=uncond_embeddings,
-            control_scale=self.control_scale,
-        )
-
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-
-
-        # save control hint
-        control_hint_recover = self.recover_control_hint(control_hint)
-
-        return Image.fromarray(
-            np.concatenate((image_instruct, image_gt, reconstruct_image, images[-1]), axis=1)
-        ) , Image.fromarray(control_hint_recover)
-
-
-    def edit_image_null_text_inversion(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
-
-        null_inversion = NullInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, uncond_embeddings = null_inversion.invert(
-            image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale)
-        x_t = x_stars[-1]
-
-        controller = AttentionStore()
-        reconstruct_latent, x_t = p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=[prompt_src], 
-                                       controller=controller, 
-                                       latent=x_t, 
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None, 
-                                       uncond_embeddings=uncond_embeddings)
-        
-
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
-
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        latents, _ = p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       latent=x_t, 
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None, 
-                                       uncond_embeddings=uncond_embeddings)
-
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
-
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
-
-    # we add this
-    def edit_image_null_text_inversion_ctrl(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
-
-        null_inversion = NullInversion(model=self.ldm_stable,
-                                       num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, uncond_embeddings = null_inversion.invert(
-            image_gt=image_gt, prompt=prompt_src, guidance_scale=guidance_scale
-        )
-        x_t = x_stars[-1]
-
-        #    PURE RE-construction, no cnet
-        #    !!must same with no CNET
-        controller = AttentionStore()
-        reconstruct_latent, _ = p2p_guidance_forward(
-            model=self.ldm_stable,
-            prompt=[prompt_src],
-            controller=controller,
-            latent=x_t,
-            num_inference_steps=self.num_ddim_steps,
-            guidance_scale=guidance_scale,
-            generator=None,
-            uncond_embeddings=uncond_embeddings,
-        )
-
-        reconstruct_image = latent2image(
-            model=self.ldm_stable.vae, latents=reconstruct_latent
-        )[0]
-        image_instruct = txt_draw(
-            f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}"
-        )
-
-        # CNet HING
-        control_image = Image.fromarray(image_gt)
-        control_hint = self.prepare_control_hint(control_image)
-
-        ########## Edit with P2P + ControlNet ##########
-        cross_replace_steps = {
-            "default_": cross_replace_steps,
-        }
-
-        controller = make_controller(
-            pipeline=self.ldm_stable,
-            prompts=prompts,
-            is_replace_controller=is_replace_controller,
-            cross_replace_steps=cross_replace_steps,
+            cross_replace_steps={"default_": cross_replace_steps},
             self_replace_steps=self_replace_steps,
             blend_words=blend_word,
             equilizer_params=eq_params,
@@ -499,7 +450,6 @@ class P2PEditor:
             device=self.device,
         )
 
-        # only here we use ControlNet + P2P
         latents, _ = p2p_guidance_forward_ctrl(
             model=self.ldm_stable,
             controlnet=self.controlnet,
@@ -512,781 +462,940 @@ class P2PEditor:
             generator=None,
             uncond_embeddings=uncond_embeddings,
             control_scale=self.control_scale,
+            semantic_alpha=semantic_alpha,  # 👈 这里真正用到 multi-scale alpha
         )
 
         images = latent2image(model=self.ldm_stable.vae, latents=latents)
+        image_instruct = txt_draw(
+            f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}"
+        )
 
-        # txt.img + original img + rec img + gen img
+        control_hint_recover = self.recover_control_hint(control_hint)
+
         return Image.fromarray(
             np.concatenate(
-                (image_instruct, image_gt, reconstruct_image, images[-1]), axis=1
+                (image_instruct, image_gt, reconstruct_image, images[-1]),
+                axis=1,
             )
-        )
-
-    def edit_image_null_text_inversion_single_branch(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
-
-        null_inversion = NullInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, uncond_embeddings = null_inversion.invert(
-            image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale)
-        x_t = x_stars[-1]
-
-        controller = AttentionStore()
-        reconstruct_latent, x_t = p2p_guidance_forward_single_branch(model=self.ldm_stable, 
-                                       prompt=[prompt_src], 
-                                       controller=controller, 
-                                       latent=x_t, 
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None, 
-                                       uncond_embeddings=uncond_embeddings)
-        
-
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
-
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        latents, _ = p2p_guidance_forward_single_branch(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       latent=x_t, 
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None, 
-                                       uncond_embeddings=uncond_embeddings)
-
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
-
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+        ), Image.fromarray(control_hint_recover)
 
 
-    def edit_image_negative_prompt_inversion(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        proximal=None,
-        quantile=0.7,
-        use_reconstruction_guidance=False,
-        recon_t=400,
-        recon_lr=0.1,
-        npi_interp=0,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-        use_inversion_guidance=False,
-        dilate_mask=1,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
 
-        null_inversion = NegativePromptInversion(model=self.ldm_stable,
-                                                num_ddim_steps=self.num_ddim_steps)
-        _, image_enc_latent, x_stars, uncond_embeddings = null_inversion.invert(
-            image_gt=image_gt, prompt=prompt_src, npi_interp=npi_interp)
-        x_t = x_stars[-1]
+        def edit_image_null_text_inversion(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
 
-        controller = AttentionStore()
-        reconstruct_latent, x_t = proximal_guidance_forward(
-                    model=self.ldm_stable,
-                    prompt=[prompt_src],
-                    controller=controller,
-                    latent=x_t,
-                    guidance_scale=guidance_scale,
-                    generator=None,
-                    uncond_embeddings=uncond_embeddings,
-                    edit_stage=False,
-                    prox=None,
-                    quantile=quantile,
-                    image_enc=None,
-                    recon_lr=recon_lr,
-                    recon_t=recon_t,
-                    inversion_guidance=False,
-                    x_stars=None,
-                    dilate_mask=dilate_mask)
-        
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            null_inversion = NullInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, uncond_embeddings = null_inversion.invert(
+                image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale)
+            x_t = x_stars[-1]
 
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
+            controller = AttentionStore()
+            reconstruct_latent, x_t = p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=[prompt_src], 
+                                        controller=controller, 
+                                        latent=x_t, 
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None, 
+                                        uncond_embeddings=uncond_embeddings)
+            
 
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        
-        latents, _ = proximal_guidance_forward(
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
+
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            latents, _ = p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        latent=x_t, 
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None, 
+                                        uncond_embeddings=uncond_embeddings)
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+        # we add this
+        def edit_image_null_text_inversion_ctrl(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = NullInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, uncond_embeddings = null_inversion.invert(
+                image_gt=image_gt, prompt=prompt_src, guidance_scale=guidance_scale
+            )
+            x_t = x_stars[-1]
+
+            #    PURE RE-construction, no cnet
+            #    !!must same with no CNET
+            controller = AttentionStore()
+            reconstruct_latent, _ = p2p_guidance_forward(
+                model=self.ldm_stable,
+                prompt=[prompt_src],
+                controller=controller,
+                latent=x_t,
+                num_inference_steps=self.num_ddim_steps,
+                guidance_scale=guidance_scale,
+                generator=None,
+                uncond_embeddings=uncond_embeddings,
+            )
+
+            reconstruct_image = latent2image(
+                model=self.ldm_stable.vae, latents=reconstruct_latent
+            )[0]
+            image_instruct = txt_draw(
+                f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}"
+            )
+
+            # CNet HING
+            control_image = Image.fromarray(image_gt)
+            control_hint = self.prepare_control_hint(control_image)
+
+            ########## Edit with P2P + ControlNet ##########
+            cross_replace_steps = {
+                "default_": cross_replace_steps,
+            }
+
+            controller = make_controller(
+                pipeline=self.ldm_stable,
+                prompts=prompts,
+                is_replace_controller=is_replace_controller,
+                cross_replace_steps=cross_replace_steps,
+                self_replace_steps=self_replace_steps,
+                blend_words=blend_word,
+                equilizer_params=eq_params,
+                num_ddim_steps=self.num_ddim_steps,
+                device=self.device,
+            )
+
+            # only here we use ControlNet + P2P
+            latents, _ = p2p_guidance_forward_ctrl(
+                model=self.ldm_stable,
+                controlnet=self.controlnet,
+                control_hint=control_hint,
+                prompt=prompts,
+                controller=controller,
+                latent=x_t,
+                num_inference_steps=self.num_ddim_steps,
+                guidance_scale=guidance_scale,
+                generator=None,
+                uncond_embeddings=uncond_embeddings,
+                control_scale=self.control_scale,
+            )
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            # txt.img + original img + rec img + gen img
+            return Image.fromarray(
+                np.concatenate(
+                    (image_instruct, image_gt, reconstruct_image, images[-1]), axis=1
+                )
+            )
+
+        def edit_image_null_text_inversion_single_branch(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = NullInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, uncond_embeddings = null_inversion.invert(
+                image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale)
+            x_t = x_stars[-1]
+
+            controller = AttentionStore()
+            reconstruct_latent, x_t = p2p_guidance_forward_single_branch(model=self.ldm_stable, 
+                                        prompt=[prompt_src], 
+                                        controller=controller, 
+                                        latent=x_t, 
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None, 
+                                        uncond_embeddings=uncond_embeddings)
+            
+
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
+
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            latents, _ = p2p_guidance_forward_single_branch(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        latent=x_t, 
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None, 
+                                        uncond_embeddings=uncond_embeddings)
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+
+        def edit_image_negative_prompt_inversion(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            proximal=None,
+            quantile=0.7,
+            use_reconstruction_guidance=False,
+            recon_t=400,
+            recon_lr=0.1,
+            npi_interp=0,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+            use_inversion_guidance=False,
+            dilate_mask=1,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = NegativePromptInversion(model=self.ldm_stable,
+                                                    num_ddim_steps=self.num_ddim_steps)
+            _, image_enc_latent, x_stars, uncond_embeddings = null_inversion.invert(
+                image_gt=image_gt, prompt=prompt_src, npi_interp=npi_interp)
+            x_t = x_stars[-1]
+
+            controller = AttentionStore()
+            reconstruct_latent, x_t = proximal_guidance_forward(
                         model=self.ldm_stable,
-                        prompt=prompts,
+                        prompt=[prompt_src],
                         controller=controller,
                         latent=x_t,
                         guidance_scale=guidance_scale,
                         generator=None,
                         uncond_embeddings=uncond_embeddings,
-                        edit_stage=True,
-                        prox=proximal,
+                        edit_stage=False,
+                        prox=None,
                         quantile=quantile,
-                        image_enc=image_enc_latent if use_reconstruction_guidance else None,
-                        recon_lr=recon_lr
-                            if use_reconstruction_guidance or use_inversion_guidance else 0,
-                        recon_t=recon_t
-                            if use_reconstruction_guidance or use_inversion_guidance else 1000,
-                        x_stars=x_stars,
+                        image_enc=None,
+                        recon_lr=recon_lr,
+                        recon_t=recon_t,
+                        inversion_guidance=False,
+                        x_stars=None,
                         dilate_mask=dilate_mask)
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
 
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
 
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            
+            latents, _ = proximal_guidance_forward(
+                            model=self.ldm_stable,
+                            prompt=prompts,
+                            controller=controller,
+                            latent=x_t,
+                            guidance_scale=guidance_scale,
+                            generator=None,
+                            uncond_embeddings=uncond_embeddings,
+                            edit_stage=True,
+                            prox=proximal,
+                            quantile=quantile,
+                            image_enc=image_enc_latent if use_reconstruction_guidance else None,
+                            recon_lr=recon_lr
+                                if use_reconstruction_guidance or use_inversion_guidance else 0,
+                            recon_t=recon_t
+                                if use_reconstruction_guidance or use_inversion_guidance else 1000,
+                            x_stars=x_stars,
+                            dilate_mask=dilate_mask)
 
-    def edit_image_directinversion(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
 
-        null_inversion = DirectInversion(model=self.ldm_stable,
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+        def edit_image_directinversion(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = DirectInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, noise_loss_list = null_inversion.invert(
+                image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
+            x_t = x_stars[-1]
+
+            controller = AttentionStore()
+            
+            reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
+        
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
+
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+        def edit_image_directinversion_vary_guidance_scale(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            inverse_guidance_scale=1,
+            forward_guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = DirectInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, noise_loss_list = null_inversion.invert_with_guidance_scale_vary_guidance(
+                image_gt=image_gt, prompt=prompts, inverse_guidance_scale=inverse_guidance_scale, 
+                forward_guidance_scale=forward_guidance_scale)
+            x_t = x_stars[-1]
+
+            controller = AttentionStore()
+            
+            reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=forward_guidance_scale, 
+                                        generator=None)
+        
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
+
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=forward_guidance_scale, 
+                                        generator=None)
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+        def edit_image_null_text_inversion_proximal_guidanca(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            proximal=None,
+            quantile=0.7,
+            use_reconstruction_guidance=False,
+            recon_t=400,
+            recon_lr=0.1,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+            use_inversion_guidance=False,
+            dilate_mask=1,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = NullInversion(model=self.ldm_stable,
                                     num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert(
-            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
-        x_t = x_stars[-1]
+            _, image_enc_latent, x_stars, uncond_embeddings = null_inversion.invert(
+                image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale)
+            x_t = x_stars[-1]
 
-        controller = AttentionStore()
-        
-        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-    
-        
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
-
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
-
-        
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
-
-    def edit_image_directinversion_vary_guidance_scale(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        inverse_guidance_scale=1,
-        forward_guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
-
-        null_inversion = DirectInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert_with_guidance_scale_vary_guidance(
-            image_gt=image_gt, prompt=prompts, inverse_guidance_scale=inverse_guidance_scale, 
-            forward_guidance_scale=forward_guidance_scale)
-        x_t = x_stars[-1]
-
-        controller = AttentionStore()
-        
-        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=forward_guidance_scale, 
-                                       generator=None)
-    
-        
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
-
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=forward_guidance_scale, 
-                                       generator=None)
-
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
-
-        
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
-
-    def edit_image_null_text_inversion_proximal_guidanca(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        proximal=None,
-        quantile=0.7,
-        use_reconstruction_guidance=False,
-        recon_t=400,
-        recon_lr=0.1,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-        use_inversion_guidance=False,
-        dilate_mask=1,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
-
-        null_inversion = NullInversion(model=self.ldm_stable,
-                                   num_ddim_steps=self.num_ddim_steps)
-        _, image_enc_latent, x_stars, uncond_embeddings = null_inversion.invert(
-            image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale)
-        x_t = x_stars[-1]
-
-        controller = AttentionStore()
-        reconstruct_latent, x_t = proximal_guidance_forward(
-                    model=self.ldm_stable,
-                    prompt=[prompt_src],
-                    controller=controller,
-                    latent=x_t,
-                    guidance_scale=guidance_scale,
-                    generator=None,
-                    uncond_embeddings=uncond_embeddings,
-                    edit_stage=False,
-                    prox=None,
-                    quantile=quantile,
-                    image_enc=None,
-                    recon_lr=recon_lr,
-                    recon_t=recon_t,
-                    inversion_guidance=False,
-                    x_stars=None,
-                    dilate_mask=dilate_mask)
-        
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
-
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        
-        latents, _ = proximal_guidance_forward(
+            controller = AttentionStore()
+            reconstruct_latent, x_t = proximal_guidance_forward(
                         model=self.ldm_stable,
-                        prompt=prompts,
+                        prompt=[prompt_src],
                         controller=controller,
                         latent=x_t,
                         guidance_scale=guidance_scale,
                         generator=None,
                         uncond_embeddings=uncond_embeddings,
-                        edit_stage=True,
-                        prox=proximal,
+                        edit_stage=False,
+                        prox=None,
                         quantile=quantile,
-                        image_enc=image_enc_latent if use_reconstruction_guidance else None,
-                        recon_lr=recon_lr
-                            if use_reconstruction_guidance or use_inversion_guidance else 0,
-                        recon_t=recon_t
-                            if use_reconstruction_guidance or use_inversion_guidance else 1000,
-                        x_stars=x_stars,
+                        image_enc=None,
+                        recon_lr=recon_lr,
+                        recon_t=recon_t,
+                        inversion_guidance=False,
+                        x_stars=None,
                         dilate_mask=dilate_mask)
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
 
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
+
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            
+            latents, _ = proximal_guidance_forward(
+                            model=self.ldm_stable,
+                            prompt=prompts,
+                            controller=controller,
+                            latent=x_t,
+                            guidance_scale=guidance_scale,
+                            generator=None,
+                            uncond_embeddings=uncond_embeddings,
+                            edit_stage=True,
+                            prox=proximal,
+                            quantile=quantile,
+                            image_enc=image_enc_latent if use_reconstruction_guidance else None,
+                            recon_lr=recon_lr
+                                if use_reconstruction_guidance or use_inversion_guidance else 0,
+                            recon_t=recon_t
+                                if use_reconstruction_guidance or use_inversion_guidance else 1000,
+                            x_stars=x_stars,
+                            dilate_mask=dilate_mask)
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
 
 
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
 
-    def edit_image_null_latent_inversion(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
+        def edit_image_null_latent_inversion(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
 
-        null_inversion = DirectInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert_null_latent(
-            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
-        x_t = x_stars[-1]
+            null_inversion = DirectInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, noise_loss_list = null_inversion.invert_null_latent(
+                image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
+            x_t = x_stars[-1]
 
-        controller = AttentionStore()
+            controller = AttentionStore()
+            
+            reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
         
-        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-    
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
+
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+        def edit_image_directinversion_not_full(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+            scale=1.
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = DirectInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, noise_loss_list = null_inversion.invert_not_full(
+                image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale,scale=scale)
+            x_t = x_stars[-1]
+
+            controller = AttentionStore()
+            
+            reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
         
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
 
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
 
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
 
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
 
-        
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
-
-    def edit_image_directinversion_not_full(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-        scale=1.
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
-
-        null_inversion = DirectInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert_not_full(
-            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale,scale=scale)
-        x_t = x_stars[-1]
-
-        controller = AttentionStore()
-        
-        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-    
-        
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
-
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
-
-        
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
-
-    
-    def edit_image_directinversion_skip_step(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        skip_step,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
-
-        null_inversion = DirectInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert_skip_step(
-            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale,skip_step=skip_step)
-        x_t = x_stars[-1]
-
-        controller = AttentionStore()
-        
-        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-    
-        
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
-
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+            
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
 
         
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+        def edit_image_directinversion_skip_step(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            skip_step,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = DirectInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, noise_loss_list = null_inversion.invert_skip_step(
+                image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale,skip_step=skip_step)
+            x_t = x_stars[-1]
+
+            controller = AttentionStore()
+            
+            reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
         
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
 
-    def edit_image_directinversion_add_target(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
 
-        null_inversion = DirectInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert(
-            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
-        x_t = x_stars[-1]
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
 
-        controller = AttentionStore()
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+        def edit_image_directinversion_add_target(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = DirectInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, noise_loss_list = null_inversion.invert(
+                image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
+            x_t = x_stars[-1]
+
+            controller = AttentionStore()
+            
+            reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
         
-        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-    
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
+
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            latents, _ = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
+
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+            
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+
+
+        def edit_image_directinversion_add_source(
+            self,
+            image_path,
+            prompt_src,
+            prompt_tar,
+            guidance_scale=7.5,
+            cross_replace_steps=0.4,
+            self_replace_steps=0.6,
+            blend_word=None,
+            eq_params=None,
+            is_replace_controller=False,
+        ):
+            image_gt = load_512(image_path)
+            prompts = [prompt_src, prompt_tar]
+
+            null_inversion = DirectInversion(model=self.ldm_stable,
+                                        num_ddim_steps=self.num_ddim_steps)
+            _, _, x_stars, noise_loss_list = null_inversion.invert(
+                image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
+            x_t = x_stars[-1]
+            
+            noise_loss_list_new=[]
+            
+            for i in range(len(noise_loss_list)):
+                noise_loss_list_new.append(noise_loss_list[i][[0]].repeat(2,1,1,1))
+            
+            controller = AttentionStore()
+            
+            reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list_new, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
         
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+            
+            reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
 
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
+            ########## edit ##########
+            cross_replace_steps = {
+                'default_': cross_replace_steps,
+            }
 
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        latents, _ = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
+            controller = make_controller(pipeline=self.ldm_stable,
+                                        prompts=prompts,
+                                        is_replace_controller=is_replace_controller,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_words=blend_word,
+                                        equilizer_params=eq_params,
+                                        num_ddim_steps=self.num_ddim_steps,
+                                        device=self.device)
+            
+            latents, _ = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
+                                        prompt=prompts, 
+                                        controller=controller, 
+                                        noise_loss_list=noise_loss_list_new, 
+                                        latent=x_t,
+                                        num_inference_steps=self.num_ddim_steps, 
+                                        guidance_scale=guidance_scale, 
+                                        generator=None)
 
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+            images = latent2image(model=self.ldm_stable.vae, latents=latents)
 
-        
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+            
+            image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+            
+            return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
 
+        # def prepare_control_hint(self, control_image: Image.Image):
+        #     import cv2
+        #     import numpy as np
+        #     import torch
 
-    def edit_image_directinversion_add_source(
-        self,
-        image_path,
-        prompt_src,
-        prompt_tar,
-        guidance_scale=7.5,
-        cross_replace_steps=0.4,
-        self_replace_steps=0.6,
-        blend_word=None,
-        eq_params=None,
-        is_replace_controller=False,
-    ):
-        image_gt = load_512(image_path)
-        prompts = [prompt_src, prompt_tar]
+        #     img = np.array(control_image)          # H,W,3 RGB (uint8)
+        #     img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        #     edges = cv2.Canny(img_gray, 100, 200)
 
-        null_inversion = DirectInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert(
-            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
-        x_t = x_stars[-1]
-        
-        noise_loss_list_new=[]
-        
-        for i in range(len(noise_loss_list)):
-            noise_loss_list_new.append(noise_loss_list[i][[0]].repeat(2,1,1,1))
-        
-        controller = AttentionStore()
-        
-        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list_new, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
-    
-        
-        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+        #     edges = edges.astype(np.float32) / 255.0
+        #     edges = np.stack([edges] * 3, axis=-1)         # H,W,3
+        #     edges = cv2.resize(edges, (512, 512), interpolation=cv2.INTER_LINEAR)
 
-        ########## edit ##########
-        cross_replace_steps = {
-            'default_': cross_replace_steps,
-        }
+        #     arr = edges[None].transpose(0, 3, 1, 2)        # [1,3,512,512]
+        #     return torch.from_numpy(arr).to(self.device)
 
-        controller = make_controller(pipeline=self.ldm_stable,
-                                    prompts=prompts,
-                                    is_replace_controller=is_replace_controller,
-                                    cross_replace_steps=cross_replace_steps,
-                                    self_replace_steps=self_replace_steps,
-                                    blend_words=blend_word,
-                                    equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
-        
-        latents, _ = direct_inversion_p2p_guidance_forward_add_target(model=self.ldm_stable, 
-                                       prompt=prompts, 
-                                       controller=controller, 
-                                       noise_loss_list=noise_loss_list_new, 
-                                       latent=x_t,
-                                       num_inference_steps=self.num_ddim_steps, 
-                                       guidance_scale=guidance_scale, 
-                                       generator=None)
+        def prepare_control_hint(self, control_image:Image.Image):
+            if self.control_preprocessor is None:
+                raise RuntimeError("control_preprocessor is not initialized. Set self.control_type first.")
+            return self.control_preprocessor(control_image)
 
-        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+        def recover_control_hint(self, t: torch.Tensor):
+            """
+            t: [1, 3, H, W] or [3, H, W], [0,1] or [0,255]
+            """
+            if isinstance(t, torch.Tensor):
+                arr = t.detach().cpu().numpy()
+            else:
+                arr = np.asarray(t)
 
-        
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+            # [1,3,H,W] -> [3,H,W]
+            if arr.ndim == 4:
+                arr = arr[0]
+            # [3,H,W] -> [H,W,3]
+            if arr.shape[0] == 3:
+                arr = arr.transpose(1, 2, 0)
 
-    # def prepare_control_hint(self, control_image: Image.Image):
-    #     import cv2
-    #     import numpy as np
-    #     import torch
+            # -> [0,1]
+            arr = arr.astype(np.float32)
+            if arr.max() > 1.0:
+                arr /= 255.0
 
-    #     img = np.array(control_image)          # H,W,3 RGB (uint8)
-    #     img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    #     edges = cv2.Canny(img_gray, 100, 200)
+            # -> [0,255] uint8
+            arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
 
-    #     edges = edges.astype(np.float32) / 255.0
-    #     edges = np.stack([edges] * 3, axis=-1)         # H,W,3
-    #     edges = cv2.resize(edges, (512, 512), interpolation=cv2.INTER_LINEAR)
-
-    #     arr = edges[None].transpose(0, 3, 1, 2)        # [1,3,512,512]
-    #     return torch.from_numpy(arr).to(self.device)
-
-    def prepare_control_hint(self, control_image:Image.Image):
-        if self.control_preprocessor is None:
-            raise RuntimeError("control_preprocessor is not initialized. Set self.control_type first.")
-        return self.control_preprocessor(control_image)
-
-    def recover_control_hint(self, t: torch.Tensor):
-        """
-        t: [1, 3, H, W] or [3, H, W], [0,1] or [0,255]
-        """
-        if isinstance(t, torch.Tensor):
-            arr = t.detach().cpu().numpy()
-        else:
-            arr = np.asarray(t)
-
-        # [1,3,H,W] -> [3,H,W]
-        if arr.ndim == 4:
-            arr = arr[0]
-        # [3,H,W] -> [H,W,3]
-        if arr.shape[0] == 3:
-            arr = arr.transpose(1, 2, 0)
-
-        # -> [0,1]
-        arr = arr.astype(np.float32)
-        if arr.max() > 1.0:
-            arr /= 255.0
-
-        # -> [0,255] uint8
-        arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
-
-        return arr
+            return arr
 
 
 

@@ -186,8 +186,7 @@ if __name__ == "__main__":
                     print(f"finish")
                 
                 else:
-                    edited_image, control_hint = p2p_editor(
-                        edit_method,
+                    edited_image, control_hint = p2p_editor(edit_method,
                         image_path=image_path,
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,

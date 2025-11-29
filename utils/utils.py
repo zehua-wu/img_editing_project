@@ -162,9 +162,11 @@ def txt_draw(text,
 
 # SemanticControl-utils: pick non conflicting words
 
+import re
+
 def pick_non_conflicting_words(
-        original_prompt:str,
-        blended_word:str
+        original_prompt: str,
+        blended_word: str
 ):
     """
     extract non conflicting words based on the original prompt and blended word
@@ -192,8 +194,7 @@ def pick_non_conflicting_words(
     # simple clean
     prompt_clean = original_prompt.replace('[','').replace(']', '')
 
-    # simple tokenization(keep words/strings)
-    tokens = re.findall(r"[A-Za-z]",prompt_clean.lower())
+    tokens = re.findall(r"[A-Za-z]+", prompt_clean.lower())
 
     # simple stopping words
     stopwords = [
@@ -209,8 +210,9 @@ def pick_non_conflicting_words(
             continue
         alpha_words.append(w)
     
-
+    # 去重但保持顺序
     alpha_words = list(dict.fromkeys(alpha_words))
     return alpha_words
+
 
 

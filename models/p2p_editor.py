@@ -11,7 +11,7 @@ from models.p2p.p2p_guidance_forward import (
 )
 from models.p2p.proximal_guidance_forward import proximal_guidance_forward
 from diffusers import StableDiffusionPipeline
-from utils.utils import load_512, latent2image, txt_draw, pick_non_conflicting_words
+from utils.utils import load_512, latent2image, txt_draw, pick_non_conflicting_words, image2latent
 from PIL import Image
 import numpy as np
 # we add this for prepare_control_hint
@@ -436,6 +436,8 @@ class P2PEditor:
             tokenizer=self.ldm_stable.tokenizer,
             device=self.device,
         )
+
+        print(semantic_alpha)
 
         # ---- 4) 编辑阶段：ControlNet + P2P controller + semantic alpha gating ----
         controller = make_controller(

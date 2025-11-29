@@ -430,8 +430,8 @@ class P2PEditor:
             blended_word=blend_word,
         )
 
-        # print('==== debug: non_conflicting_words ====')
-        # print(alpha_words)
+        print('==== debug: non_conflicting_words ====')
+        print(alpha_words)
 
         semantic_alpha = build_semantic_alpha_from_store_multi(
             attention_store=controller_rec,

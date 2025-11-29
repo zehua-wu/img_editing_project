@@ -212,7 +212,7 @@ if __name__ == "__main__":
 
                     if not os.path.exists(os.path.dirname(present_semantic_alpha_vis_hint_save_path)):
                         os.makedirs(os.path.dirname(present_semantic_alpha_vis_hint_save_path))
-                    control_hint.save(present_semantic_alpha_vis_hint_save_path)
+                    semantic_alpha_vis.save(present_semantic_alpha_vis_hint_save_path)
                     
                     print(f"finish")
 

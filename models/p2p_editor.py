@@ -437,7 +437,7 @@ class P2PEditor:
             device=self.device,
         )
 
-        print(semantic_alpha)
+        # print(semantic_alpha)
 
         # ---- 4) 编辑阶段：ControlNet + P2P controller + semantic alpha gating ----
         controller = make_controller(

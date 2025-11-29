@@ -39,7 +39,7 @@ from models.p2p import seq_aligner
 
 MAX_NUM_WORDS = 77
 LATENT_SIZE = (64, 64)
-LOW_RESOURCE = False 
+LOW_RESOURCE = False
 
 def register_attention_control(model, controller):
     def ca_forward(self, place_in_unet):
@@ -55,11 +55,11 @@ def register_attention_control(model, controller):
             attention_mask=None,
             **cross_attention_kwargs
         ):
-            
+
             x = hidden_states
 
             # context：if encoder_hidden_states then cross-attn, else self-attn
-            if isinstance(encoder_hidden_states, dict):  # !! here compatible 
+            if isinstance(encoder_hidden_states, dict):  # !! here compatible
                 encoder_hidden_states = encoder_hidden_states.get("CONTEXT_TENSOR", None)
 
             if encoder_hidden_states is None:
@@ -72,12 +72,12 @@ def register_attention_control(model, controller):
             batch_size, sequence_length, dim = x.shape
             h = self.heads
 
-            # Q from x || K/V from context 
+            # Q from x || K/V from context
             q = self.to_q(x)
             k = self.to_k(context)
             v = self.to_v(context)
 
-            # reshape into multi-head 
+            # reshape into multi-head
             q = self.reshape_heads_to_batch_dim(q)
             k = self.reshape_heads_to_batch_dim(k)
             v = self.reshape_heads_to_batch_dim(v)
@@ -147,7 +147,7 @@ def get_equalizer(text, word_select, values, tokenizer=None):
     if type(word_select) is int or type(word_select) is str:
         word_select = (word_select,)
     equalizer = torch.ones(1, 77)
-    
+
     for word, val in zip(word_select, values):
         inds = get_word_inds(text, word, tokenizer)
         equalizer[:, inds] = val
@@ -166,7 +166,7 @@ class LocalBlend:
         mask = mask.gt(self.th[1-int(use_pool)])
         mask = mask[:1] + mask
         return mask
-    
+
     def __call__(self, x_t, attention_store):
         self.counter += 1
         if self.counter > self.start_blend:
@@ -182,57 +182,76 @@ class LocalBlend:
             x_t = x_t[:1] + mask * (x_t - x_t[:1])
         return x_t
 
-    def __init__(self, prompts, words, substruct_words=None, start_blend=0.2, th=(.3, .3),
-                 tokenizer=None, device="cuda",num_ddim_steps=50):
-        alpha_layers = torch.zeros(len(prompts),  1, 1, 1, 1, MAX_NUM_WORDS)
-        for i, (prompt, words_) in enumerate(zip(prompts, words)):
-            if type(words_) is str:
-                words_ = [words_]
-            for word in words_:
-                ind = get_word_inds(prompt, word, tokenizer)
-                alpha_layers[i, :, :, :, :, ind] = 1
-        
-        if substruct_words is not None:
-            substruct_layers = torch.zeros(len(prompts),  1, 1, 1, 1, MAX_NUM_WORDS)
-            for i, (prompt, words_) in enumerate(zip(prompts, substruct_words)):
+    def __init__(
+            self,
+            prompts,
+            words=[],
+            substruct_words=None,
+            start_blend=0.2,
+            th=(.3, .3),
+            tokenizer=None,
+            device="cuda",
+            num_ddim_steps=50,
+            latent_mask=None):
+
+        alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
+        self.alpha_layers = alpha_layers.to(device)
+
+        # Store custom latent mask
+        if latent_mask is not None:
+            latent_mask = torch.as_tensor(latent_mask, dtype=torch.float16, device=device)
+            # latent_mask = latent_mask.unsqueeze(1)
+            self.custom_mask = latent_mask
+        else:
+            self.custom_mask = None
+            for i, (prompt, words_) in enumerate(zip(prompts, words)):
                 if type(words_) is str:
                     words_ = [words_]
                 for word in words_:
                     ind = get_word_inds(prompt, word, tokenizer)
-                    substruct_layers[i, :, :, :, :, ind] = 1
-            self.substruct_layers = substruct_layers.to(device)
-        else:
-            self.substruct_layers = None
-        self.alpha_layers = alpha_layers.to(device)
+                    alpha_layers[i, :, :, :, :, ind] = 1
+
+            if substruct_words is not None:
+                substruct_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
+                for i, (prompt, words_) in enumerate(zip(prompts, substruct_words)):
+                    if type(words_) is str:
+                        words_ = [words_]
+                    for word in words_:
+                        ind = get_word_inds(prompt, word, tokenizer)
+                        substruct_layers[i, :, :, :, :, ind] = 1
+                self.substruct_layers = substruct_layers.to(device)
+            else:
+                self.substruct_layers = None
+
         self.start_blend = int(start_blend * num_ddim_steps)
-        self.counter = 0 
-        self.th=th
-        
-        
+        self.counter = 0
+        self.th = th
+
+
 class EmptyControl:
 
     def step_callback(self, x_t):
         return x_t
-    
+
     def between_steps(self):
         return
-    
+
     def __call__(self, attn, is_cross, place_in_unet):
         return attn
 
-    
+
 class AttentionControl(abc.ABC):
-    
+
     def step_callback(self, x_t):
         return x_t
-    
+
     def between_steps(self):
         return
-    
+
     @property
     def num_uncond_att_layers(self):
         return self.num_att_layers if LOW_RESOURCE else 0
-    
+
     @abc.abstractmethod
     def forward (self, attn, is_cross, place_in_unet):
         raise NotImplementedError
@@ -250,7 +269,7 @@ class AttentionControl(abc.ABC):
             self.cur_step += 1
             self.between_steps()
         return attn
-    
+
     def reset(self):
         self.cur_step = 0
         self.cur_att_layer = 0
@@ -271,7 +290,7 @@ class SpatialReplace(EmptyControl):
     def __init__(self, stop_inject,num_ddim_steps=50):
         super(SpatialReplace, self).__init__()
         self.stop_inject = int((1 - stop_inject) * num_ddim_steps)
-        
+
 
 class AttentionStore(AttentionControl):
 
@@ -309,25 +328,25 @@ class AttentionStore(AttentionControl):
         self.step_store = self.get_empty_store()
         self.attention_store = {}
 
-        
+
 class AttentionControlEdit(AttentionStore, abc.ABC):
-    
+
     def step_callback(self, x_t):
         if self.local_blend is not None:
             x_t = self.local_blend(x_t, self.attention_store)
         return x_t
-        
+
     def replace_self_attention(self, attn_base, att_replace, place_in_unet):
         if att_replace.shape[2] <= 32 ** 2:
             attn_base = attn_base.unsqueeze(0).expand(att_replace.shape[0], *attn_base.shape)
             return attn_base
         else:
             return att_replace
-    
+
     @abc.abstractmethod
     def replace_cross_attention(self, attn_base, att_replace):
         raise NotImplementedError
-    
+
     def forward(self, attn, is_cross, place_in_unet):
         super(AttentionControlEdit, self).forward(attn, is_cross, place_in_unet)
         if is_cross or (self.num_self_replace[0] <= self.cur_step < self.num_self_replace[1]):
@@ -342,13 +361,13 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
                 attn[1:] = self.replace_self_attention(attn_base, attn_repalce, place_in_unet)
             attn = attn.reshape(self.batch_size * h, *attn.shape[2:])
         return attn
-    
-    def __init__(self, 
-                 prompts, 
+
+    def __init__(self,
+                 prompts,
                  num_steps,
                  cross_replace_steps,
                  self_replace_steps,
-                 local_blend, 
+                 local_blend,
                  tokenizer=None,
                  device="cuda"):
         super(AttentionControlEdit, self).__init__()
@@ -364,13 +383,13 @@ class AttentionReplace(AttentionControlEdit):
 
     def replace_cross_attention(self, attn_base, att_replace):
         return torch.einsum('hpw,bwn->bhpn', attn_base, self.mapper)
-      
+
     def __init__(self, prompts, num_steps, cross_replace_steps, self_replace_steps,
                  local_blend = None, tokenizer=None,device="cuda"):
-        super(AttentionReplace, self).__init__(prompts=prompts, 
-                                              num_steps=num_steps, 
-                                              cross_replace_steps=cross_replace_steps, 
-                                              self_replace_steps=self_replace_steps, 
+        super(AttentionReplace, self).__init__(prompts=prompts,
+                                              num_steps=num_steps,
+                                              cross_replace_steps=cross_replace_steps,
+                                              self_replace_steps=self_replace_steps,
                                               local_blend=local_blend,
                                               device=device)
         self.mapper = seq_aligner.get_replacement_mapper(prompts, tokenizer).to(device)
@@ -386,10 +405,10 @@ class AttentionRefine(AttentionControlEdit):
 
     def __init__(self, prompts, num_steps, cross_replace_steps, self_replace_steps,
                  local_blend = None, tokenizer=None,device="cuda"):
-        super(AttentionRefine, self).__init__(prompts=prompts, 
-                                              num_steps=num_steps, 
-                                              cross_replace_steps=cross_replace_steps, 
-                                              self_replace_steps=self_replace_steps, 
+        super(AttentionRefine, self).__init__(prompts=prompts,
+                                              num_steps=num_steps,
+                                              cross_replace_steps=cross_replace_steps,
+                                              self_replace_steps=self_replace_steps,
                                               local_blend=local_blend,
                                               device=device)
         self.mapper, alphas = seq_aligner.get_refinement_mapper(prompts, tokenizer)
@@ -406,63 +425,73 @@ class AttentionReweight(AttentionControlEdit):
         # attn_replace = attn_replace / attn_replace.sum(-1, keepdims=True)
         return attn_replace
 
-    def __init__(self, 
-                 prompts, 
-                 num_steps, 
-                 cross_replace_steps, 
-                 self_replace_steps, 
+    def __init__(self,
+                 prompts,
+                 num_steps,
+                 cross_replace_steps,
+                 self_replace_steps,
                  equalizer,
-                 local_blend = None, 
+                 local_blend = None,
                  controller = None,
                  device="cuda"):
-        super(AttentionReweight, self).__init__(prompts=prompts, 
-                                                num_steps=num_steps, 
-                                                cross_replace_steps=cross_replace_steps, 
-                                                self_replace_steps=self_replace_steps, 
+        super(AttentionReweight, self).__init__(prompts=prompts,
+                                                num_steps=num_steps,
+                                                cross_replace_steps=cross_replace_steps,
+                                                self_replace_steps=self_replace_steps,
                                                 local_blend=local_blend,
                                                 device=device)
         self.equalizer = equalizer.to(device)
         self.prev_controller = controller
 
 
-def make_controller(pipeline, 
-                    prompts, 
-                    is_replace_controller, 
-                    cross_replace_steps, 
-                    self_replace_steps, 
-                    blend_words=None, 
-                    equilizer_params=None, 
+def make_controller(pipeline,
+                    prompts,
+                    is_replace_controller,
+                    cross_replace_steps,
+                    self_replace_steps,
+                    blend_words=None,
+                    equilizer_params=None,
                     num_ddim_steps=50,
-                    device="cuda") -> AttentionControlEdit:
+                    device="cuda",
+                    latent_mask=None) -> AttentionControlEdit:
     if blend_words is None:
-        lb = None
+        if latent_mask is not None:
+            lb = LocalBlend(prompts,
+                            latent_mask=latent_mask,
+                            tokenizer=pipeline.tokenizer,
+                            device=device,
+                            num_ddim_steps=num_ddim_steps)
+        else:
+            lb = None
     else:
-        lb = LocalBlend(prompts, blend_words, tokenizer=pipeline.tokenizer, device=device,num_ddim_steps=num_ddim_steps)
+        lb = LocalBlend(prompts, blend_words, tokenizer=pipeline.tokenizer, device=device,
+                        num_ddim_steps=num_ddim_steps)
+
     if is_replace_controller:
-        controller = AttentionReplace(prompts, 
-                                      num_ddim_steps, 
-                                      cross_replace_steps=cross_replace_steps, 
-                                      self_replace_steps=self_replace_steps, 
+        controller = AttentionReplace(prompts,
+                                      num_ddim_steps,
+                                      cross_replace_steps=cross_replace_steps,
+                                      self_replace_steps=self_replace_steps,
                                       local_blend=lb,
                                       tokenizer=pipeline.tokenizer)
     else:
-        controller = AttentionRefine(prompts, 
-                                     num_ddim_steps, 
-                                     cross_replace_steps=cross_replace_steps, 
-                                     self_replace_steps=self_replace_steps, 
+        controller = AttentionRefine(prompts,
+                                     num_ddim_steps,
+                                     cross_replace_steps=cross_replace_steps,
+                                     self_replace_steps=self_replace_steps,
                                      local_blend=lb,
                                      tokenizer=pipeline.tokenizer)
     if equilizer_params is not None:
-        eq = get_equalizer(prompts[1], 
-                           equilizer_params["words"], 
-                           equilizer_params["values"], 
+        eq = get_equalizer(prompts[1],
+                           equilizer_params["words"],
+                           equilizer_params["values"],
                            tokenizer=pipeline.tokenizer)
-        controller = AttentionReweight(prompts, 
+        controller = AttentionReweight(prompts,
                                        num_ddim_steps,
                                        cross_replace_steps=cross_replace_steps,
-                                       self_replace_steps=self_replace_steps, 
-                                       equalizer=eq, 
-                                       local_blend=lb, 
+                                       self_replace_steps=self_replace_steps,
+                                       equalizer=eq,
+                                       local_blend=lb,
                                        controller=controller)
     return controller
 

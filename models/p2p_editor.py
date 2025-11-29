@@ -11,7 +11,7 @@ from models.p2p.p2p_guidance_forward import (
 )
 from models.p2p.proximal_guidance_forward import proximal_guidance_forward
 from diffusers import StableDiffusionPipeline
-from utils.utils import load_512, latent2image, txt_draw, pick_non_conflicting_words, image2latent
+from utils.utils import load_512, latent2image, txt_draw, pick_non_conflicting_words, image2latent, semantic_alpha_dict_to_heatmap_strip
 from PIL import Image
 import numpy as np
 # we add this for prepare_control_hint
@@ -430,8 +430,8 @@ class P2PEditor:
             blended_word=blend_word,
         )
 
-        print('==== debug: non_conflicting_words ====')
-        print(alpha_words)
+        # print('==== debug: non_conflicting_words ====')
+        # print(alpha_words)
 
         semantic_alpha = build_semantic_alpha_from_store_multi(
             attention_store=controller_rec,
@@ -441,8 +441,17 @@ class P2PEditor:
             device=self.device,
         )
 
-        print('==== debug: semantic_alpha_shape ====')
-        print(semantic_alpha)
+        # visualize semantic alpha
+        semantic_alpha_vis = None
+        if isinstance(semantic_alpha, dict) and len(semantic_alpha) > 0:
+            semantic_alpha_vis = semantic_alpha_dict_to_heatmap_strip(
+                semantic_alpha,
+                cmap_name="magma",   # 或者 "viridis", "plasma" 等
+                target_height=256,   # 控制可视化图的高度
+            )
+
+        # print('==== debug: semantic_alpha_shape ====')
+        # print(semantic_alpha)
 
         # ---- 4) 编辑阶段：ControlNet + P2P controller + semantic alpha gating ----
         controller = make_controller(
@@ -484,7 +493,7 @@ class P2PEditor:
                 (image_instruct, image_gt, reconstruct_image, images[-1]),
                 axis=1,
             )
-        ), Image.fromarray(control_hint_recover)
+        ), Image.fromarray(control_hint_recover),semantic_alpha_vis
 
 
 

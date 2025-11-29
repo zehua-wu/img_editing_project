@@ -5,6 +5,8 @@ import PIL.Image as Image
 import torch
 import torch.nn.functional as F
 import re
+import matplotlib.cm as cm
+
 
 def slerp(val, low, high):
     """ 
@@ -215,4 +217,83 @@ def pick_non_conflicting_words(
     return alpha_words
 
 
+
+# semantic_alpha -> heatmap
+
+
+
+def _alpha_tensor_to_2d_numpy(alpha: torch.Tensor) -> np.ndarray:
+    """
+    支持 [1,1,H,W] / [1,H,W] / [H,W]，
+    转成归一化的 [H,W] numpy, 范围 [0,1]
+    """
+    if alpha.dim() == 4:
+        a = alpha[0, 0]
+    elif alpha.dim() == 3:
+        a = alpha[0]
+    elif alpha.dim() == 2:
+        a = alpha
+    else:
+        raise ValueError(f"Unsupported alpha shape: {alpha.shape}")
+
+    a = a.detach().cpu().float()
+    amin, amax = a.min(), a.max()
+    if (amax - amin) > 1e-6:
+        a = (a - amin) / (amax - amin)
+    else:
+        a = torch.zeros_like(a)
+    return a.numpy()
+
+
+def semantic_alpha_dict_to_heatmap_strip(
+    semantic_alpha: dict,
+    cmap_name: str = "magma",
+    target_height: int = 256,   # 所有子图统一这个高度，宽度按比例缩放
+) -> Image.Image:
+    """
+    semantic_alpha: {side: alpha_tensor}
+    返回：一张横向拼接的 PIL.Image，所有子图高度相同
+    """
+    if not isinstance(semantic_alpha, dict) or len(semantic_alpha) == 0:
+        raise ValueError("semantic_alpha must be a non-empty dict")
+
+    cmap = cm.get_cmap(cmap_name)
+    side_list = sorted(semantic_alpha.keys())
+    heatmap_imgs = []
+
+    for side in side_list:
+        alpha = semantic_alpha[side]
+        a_np = _alpha_tensor_to_2d_numpy(alpha)      # [H,W] in [0,1]
+
+        # colormap → RGB
+        rgba = cmap(a_np)                            # [H,W,4] float
+        rgb = (rgba[..., :3] * 255).astype(np.uint8) # [H,W,3] uint8
+        img = Image.fromarray(rgb)
+
+        # 统一高度，高度固定 target_height，宽度按比例变化
+        H, W = img.height, img.width
+        new_h = target_height
+        new_w = int(W * (new_h / H))
+        img = img.resize((new_w, new_h), Image.BILINEAR)
+
+        # 可选：在左上角写上 side
+        try:
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(img)
+            draw.text((5, 5), f"{side}", fill=(255, 255, 255))
+        except Exception:
+            pass
+
+        heatmap_imgs.append(img)
+
+    # 拼成一条横向 strip
+    total_width = sum(im.width for im in heatmap_imgs)
+    strip = Image.new("RGB", (total_width, target_height))
+
+    x = 0
+    for im in heatmap_imgs:
+        strip.paste(im, (x, 0))
+        x += im.width
+
+    return strip
 

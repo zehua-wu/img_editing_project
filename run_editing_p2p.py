@@ -158,6 +158,7 @@ if __name__ == "__main__":
             present_image_save_path=image_path.replace(data_path, os.path.join(output_path,image_save_paths[edit_method]))
             if args.control_type is not None:
                 present_control_hint_save_path=image_path.replace(data_path, os.path.join(output_path,image_save_paths[edit_method],'control_hint',args.control_type))
+                present_semantic_alpha_vis_hint_save_path=image_path.replace(data_path, os.path.join(output_path,image_save_paths[edit_method],'semantic_alpha',args.control_type))
             if ((not os.path.exists(present_image_save_path)) or rerun_exist_images):
                 print(f"editing image [{image_path}] with [{edit_method}]")
                 setup_seed()
@@ -186,7 +187,7 @@ if __name__ == "__main__":
                     print(f"finish")
                 
                 else:
-                    edited_image, control_hint = p2p_editor(edit_method,
+                    edited_image, control_hint,semantic_alpha_vis = p2p_editor(edit_method,
                         image_path=image_path,
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
@@ -208,6 +209,10 @@ if __name__ == "__main__":
                     if not os.path.exists(os.path.dirname(present_control_hint_save_path)):
                         os.makedirs(os.path.dirname(present_control_hint_save_path))
                     control_hint.save(present_control_hint_save_path)
+
+                    if not os.path.exists(os.path.dirname(present_semantic_alpha_vis_hint_save_path)):
+                        os.makedirs(os.path.dirname(present_semantic_alpha_vis_hint_save_path))
+                    control_hint.save(present_semantic_alpha_vis_hint_save_path)
                     
                     print(f"finish")
 

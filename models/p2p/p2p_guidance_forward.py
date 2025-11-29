@@ -389,9 +389,14 @@ def p2p_guidance_forward_ctrl(
         # 6) 在 ControlNet feature 上应用 semantic alpha
         if semantic_alpha is not None:
             down_res = []
-            print("==== feat shape ====")
+            # print("==== feat shape ====")
             for feat in ctrl_out.down_block_res_samples:
-                print(feat.shape[-2:])
+                # print(feat.shape[-2:])
+                H, W =feat.shape[-2:]
+                if H in (64, 32):
+                    # 不加 control：相当于这一层 ControlNet 输出为 0
+                    down_res.append(torch.zeros_like(feat))
+                    continue
                 alpha_resized = pick_alpha_for_feat(
                     semantic_alpha,
                     feat_hw=feat.shape[-2:],

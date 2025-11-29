@@ -194,7 +194,7 @@ class LocalBlend:
     def __init__(
             self,
             prompts,
-            words,
+            words=[],
             substruct_words=None,
             start_blend=0.2,
             th=(.3, .3),
@@ -202,37 +202,40 @@ class LocalBlend:
             device="cuda",
             num_ddim_steps=50,
             latent_mask=None):
-        alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
-        for i, (prompt, words_) in enumerate(zip(prompts, words)):
-            if type(words_) is str:
-                words_ = [words_]
-            for word in words_:
-                ind = get_word_inds(prompt, word, tokenizer)
-                alpha_layers[i, :, :, :, :, ind] = 1
 
-        if substruct_words is not None:
-            substruct_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
-            for i, (prompt, words_) in enumerate(zip(prompts, substruct_words)):
-                if type(words_) is str:
-                    words_ = [words_]
-                for word in words_:
-                    ind = get_word_inds(prompt, word, tokenizer)
-                    substruct_layers[i, :, :, :, :, ind] = 1
-            self.substruct_layers = substruct_layers.to(device)
-        else:
-            self.substruct_layers = None
+        alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
         self.alpha_layers = alpha_layers.to(device)
-        self.start_blend = int(start_blend * num_ddim_steps)
-        self.counter = 0
-        self.th = th
 
         # Store custom latent mask
         if latent_mask is not None:
             latent_mask = torch.as_tensor(latent_mask, dtype=torch.float16, device=device)
-            latent_mask = latent_mask.unsqueeze(1)
+            # latent_mask = latent_mask.unsqueeze(1)
             self.custom_mask = latent_mask
         else:
             self.custom_mask = None
+            for i, (prompt, words_) in enumerate(zip(prompts, words)):
+                if type(words_) is str:
+                    words_ = [words_]
+                for word in words_:
+                    ind = get_word_inds(prompt, word, tokenizer)
+                    alpha_layers[i, :, :, :, :, ind] = 1
+
+            if substruct_words is not None:
+                substruct_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
+                for i, (prompt, words_) in enumerate(zip(prompts, substruct_words)):
+                    if type(words_) is str:
+                        words_ = [words_]
+                    for word in words_:
+                        ind = get_word_inds(prompt, word, tokenizer)
+                        substruct_layers[i, :, :, :, :, ind] = 1
+                self.substruct_layers = substruct_layers.to(device)
+            else:
+                self.substruct_layers = None
+
+        self.start_blend = int(start_blend * num_ddim_steps)
+        self.counter = 0
+        self.th = th
+
 
 class EmptyControl:
 
@@ -462,12 +465,21 @@ def make_controller(pipeline,
                     blend_words=None,
                     equilizer_params=None,
                     num_ddim_steps=50,
-                    device="cuda") -> AttentionControlEdit:
+                    device="cuda",
+                    latent_mask=None) -> AttentionControlEdit:
     if blend_words is None:
-        lb = None
+        if latent_mask is not None:
+            lb = LocalBlend(prompts,
+                            latent_mask=latent_mask,
+                            tokenizer=pipeline.tokenizer,
+                            device=device,
+                            num_ddim_steps=num_ddim_steps)
+        else:
+            lb = None
     else:
         lb = LocalBlend(prompts, blend_words, tokenizer=pipeline.tokenizer, device=device,
                         num_ddim_steps=num_ddim_steps)
+
     if is_replace_controller:
         controller = AttentionReplace(prompts,
                                       num_ddim_steps,

@@ -429,6 +429,10 @@ class P2PEditor:
             original_prompt=prompt_src,
             blended_word=blend_word,
         )
+
+        print('==== debug: non_conflicting_words ====')
+        print(alpha_words)
+
         semantic_alpha = build_semantic_alpha_from_store_multi(
             attention_store=controller_rec,
             prompt=prompt_src,
@@ -437,7 +441,8 @@ class P2PEditor:
             device=self.device,
         )
 
-        # print(semantic_alpha)
+        print('==== debug: semantic_alpha_shape ====')
+        print(semantic_alpha)
 
         # ---- 4) 编辑阶段：ControlNet + P2P controller + semantic alpha gating ----
         controller = make_controller(

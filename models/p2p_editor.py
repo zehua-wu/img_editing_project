@@ -42,11 +42,19 @@ class P2PEditor:
                 eq_params=None,
                 is_replace_controller=False,
                 use_inversion_guidance=False,
-                dilate_mask=1,):
+                dilate_mask=1,
+                latent_mask=None,):
         if edit_method=="ddim+p2p":
-            return self.edit_image_ddim(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
-                                        cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
-                                        blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
+            return self.edit_image_ddim(image_path,
+                                        prompt_src,
+                                        prompt_tar,
+                                        guidance_scale=guidance_scale,
+                                        cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps,
+                                        blend_word=blend_word,
+                                        eq_params=eq_params,
+                                        is_replace_controller=is_replace_controller,
+                                        latent_mask=latent_mask)
         elif edit_method in ["null-text-inversion+p2p", "null-text-inversion+p2p_a800", "null-text-inversion+p2p_3090"]:
             return self.edit_image_null_text_inversion(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
                                         cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
@@ -145,6 +153,7 @@ class P2PEditor:
         blend_word=None,
         eq_params=None,
         is_replace_controller=False,
+        latent_mask=None,
     ):
         image_gt = load_512(image_path)
         prompts = [prompt_src, prompt_tar]
@@ -182,7 +191,8 @@ class P2PEditor:
                                     blend_words=blend_word,
                                     equilizer_params=eq_params,
                                     num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
+                                    device=self.device,
+                                    latent_mask=latent_mask)
         latents, _ = p2p_guidance_forward(model=self.ldm_stable, 
                                        prompt=prompts, 
                                        controller=controller, 

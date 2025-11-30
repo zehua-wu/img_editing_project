@@ -393,9 +393,9 @@ def p2p_guidance_forward_ctrl(
             for feat in ctrl_out.down_block_res_samples:
                 # print(feat.shape[-2:])
                 H, W =feat.shape[-2:]
-                if H in (64, 32):
+                if H in (64):
                     # 不加 control：相当于这一层 ControlNet 输出为 0
-                    down_res.append(torch.zeros_like(feat))
+                    down_res.append(feat*0.2)
                     continue
                 alpha_resized = pick_alpha_for_feat(
                     semantic_alpha,

@@ -4,7 +4,7 @@ import os
 import numpy as np
 from PIL import Image
 import csv
-from evaluation.matrics_calculator import MetricsCalculator
+from matrics_calculator import MetricsCalculator
 
 def mask_decode(encoded_mask,image_shape=[512,512]):
     length=image_shape[0]*image_shape[1]
@@ -171,6 +171,12 @@ all_tgt_image_folders={
     # ablation results of add target latent
     "8_ablation_directinversion_add-source+p2p":"output/ablation_directinversion_add-source+p2p/annotation_images",
     "8_ablation_directinversion_add-target+p2p":"output/ablation_directinversion_add-target+p2p/annotation_images",
+
+    # ddim+p2p+controlnet+semantic (only layers 16,8)
+    "9_DDIM_p2p_SemanticControl_canny_16_8":"DDIM_p2p_SemanticControl_output/canny_scale1.0/ddim+p2p_ctrl/annotation_images",
+    "9_DDIM_p2p_SemanticControl_depth_16_8":"DDIM_p2p_SemanticControl_output/depth_scale1.0/ddim+p2p_ctrl/annotation_images",
+    "9_DDIM_p2p_SemanticControl_pose_16_8":"DDIM_p2p_SemanticControl_output/pose_scale1.0/ddim+p2p_ctrl/annotation_images",
+    "9_DDIM_p2p_SemanticControl_normal_16_8":"DDIM_p2p_SemanticControl_output/normal_scale1.0/ddim+p2p_ctrl/annotation_images",
     }
 
 
@@ -178,20 +184,32 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--annotation_mapping_file', type=str, default="data/mapping_file.json")
     parser.add_argument('--metrics',  nargs = '+', type=str, default=[
-                                                         "structure_distance",
-                                                         "psnr_unedit_part",
+                                                        "lpips",
                                                          "lpips_unedit_part",
-                                                         "mse_unedit_part",
-                                                         "ssim_unedit_part",
+                                                         "lpips_edit_part",
+
+                                                        "ssim",
+                                                        "ssim_unedit_part",
+                                                        "ssim_edit_part",
+
+                                                        "mse",
+                                                        "mse_unedit_part",
+                                                        "mse_edit_part",
+
+                                                         "structure_distance",
+                                                         "structure_distance_unedit_part"
+                                                         "structure_distance_edit_part",
+
                                                          "clip_similarity_source_image",
                                                          "clip_similarity_target_image",
                                                          "clip_similarity_target_image_edit_part",
                                                          ])
     parser.add_argument('--src_image_folder', type=str, default="data/annotation_images")
     parser.add_argument('--tgt_methods', nargs = '+', type=str, default=[
-                                                                    "1_ddim+p2p", "1_null-text-inversion+p2p_a800",
-                                                                    "1_null-text-inversion+p2p_3090", "1_negative-prompt-inversion+p2p",
-                                                                    "1_stylediffusion+p2p", "1_directinversion+p2p",
+                                            "9_DDIM_p2p_SemanticControl_canny_16_8",
+                                            "9_DDIM_p2p_SemanticControl_depth_16_8",
+                                            "9_DDIM_p2p_SemanticControl_pose_16_8",
+                                            "9_DDIM_p2p_SemanticControl_normal_16_8",
                                                                   ])
     parser.add_argument('--result_path', type=str, default="evaluation_result.csv")
     parser.add_argument('--device', type=str, default="cuda")

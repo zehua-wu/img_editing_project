@@ -170,16 +170,23 @@ class LocalBlend:
     def __call__(self, x_t, attention_store):
         self.counter += 1
         if self.counter > self.start_blend:
+            # Use custom latent mask if provided
+            if self.custom_mask is not None:
+                b = x_t.shape[0]
+                # Broadcast to batch: (B, 1, 64, 64)
+                mask = self.custom_mask.expand(b, -1, -1, -1)
+            else:
+                maps = attention_store["down_cross"][2:4] + attention_store["up_cross"][:3]
+                maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 16, 16, MAX_NUM_WORDS) for item in maps]
+                maps = torch.cat(maps, dim=1)
+                mask = self.get_mask(maps, self.alpha_layers, True)
+                if self.substruct_layers is not None:
+                    maps_sub = ~self.get_mask(maps, self.substruct_layers, False)
+                    mask = mask * maps_sub
 
-            maps = attention_store["down_cross"][2:4] + attention_store["up_cross"][:3]
-            maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 16, 16, MAX_NUM_WORDS) for item in maps]
-            maps = torch.cat(maps, dim=1)
-            mask = self.get_mask(maps, self.alpha_layers, True)
-            if self.substruct_layers is not None:
-                maps_sub = ~self.get_mask(maps, self.substruct_layers, False)
-                mask = mask * maps_sub
             mask = mask.float()
             x_t = x_t[:1] + mask * (x_t - x_t[:1])
+
         return x_t
 
     def __init__(

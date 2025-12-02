@@ -136,9 +136,17 @@ class P2PEditor:
                                         is_replace_controller=is_replace_controller, use_inversion_guidance=use_inversion_guidance,
                                         dilate_mask=dilate_mask)
         elif edit_method=="directinversion+p2p":
-            return self.edit_image_directinversion(image_path=image_path, prompt_src=prompt_src, prompt_tar=prompt_tar, guidance_scale=guidance_scale, 
-                                        cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
-                                        blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
+            return self.edit_image_directinversion(
+                image_path=image_path,
+                prompt_src=prompt_src,
+                prompt_tar=prompt_tar,
+                guidance_scale=guidance_scale,
+                cross_replace_steps=cross_replace_steps,
+                self_replace_steps=self_replace_steps,
+                blend_word=blend_word,
+                eq_params=eq_params,
+                is_replace_controller=is_replace_controller,
+                latent_mask=latent_mask)
         elif edit_method in ["directinversion+p2p_guidance_0_1", "directinversion+p2p_guidance_0_5","directinversion+p2p_guidance_0_25", \
             "directinversion+p2p_guidance_0_75", "directinversion+p2p_guidance_1_1", "directinversion+p2p_guidance_1_5", "directinversion+p2p_guidance_1_25", \
                 "directinversion+p2p_guidance_1_75", "directinversion+p2p_guidance_25_1", "directinversion+p2p_guidance_25_5", "directinversion+p2p_guidance_25_25", \
@@ -822,6 +830,7 @@ class P2PEditor:
         blend_word=None,
         eq_params=None,
         is_replace_controller=False,
+        latent_mask=None,
     ):
         image_gt = load_512(image_path)
         prompts = [prompt_src, prompt_tar]
@@ -859,7 +868,8 @@ class P2PEditor:
                                     blend_words=blend_word,
                                     equilizer_params=eq_params,
                                     num_ddim_steps=self.num_ddim_steps,
-                                    device=self.device)
+                                    device=self.device,
+                                    latent_mask=latent_mask)
         
         latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
                                     prompt=prompts, 

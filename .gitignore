@@ -5,6 +5,5 @@ __pycache__
 *.csv
 *.out
 *.bash
-*.md
-*.sh
+*.ipynb_checkpoints/
 logs/
